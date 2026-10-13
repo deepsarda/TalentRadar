@@ -1,0 +1,29 @@
+{
+  "name": "@talentradar/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check:types": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@talentradar/shared": "workspace:*",
+    "express": "5.3.0",
+    "helmet": "8.3.0",
+    "mongodb": "7.7.0",
+    "zod": "4.6.6"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "26.6.5",
+    "@types/supertest": "7.2.1",
+    "supertest": "7.3.1",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.4"
+  }
+}

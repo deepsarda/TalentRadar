@@ -1,0 +1,1428 @@
+{
+  "version": "v2",
+  "domains": {
+    "frontend": {
+      "label": "Frontend",
+      "description": "Web interfaces, rendering, state, and browser platforms"
+    },
+    "backend": {
+      "label": "Backend",
+      "description": "APIs, application services, databases, and distributed systems"
+    },
+    "mobile": { "label": "Mobile", "description": "Native and cross-platform mobile applications" },
+    "ai_ml": {
+      "label": "AI / ML",
+      "description": "Machine learning, language models, vision, and model operations"
+    },
+    "data": {
+      "label": "Data",
+      "description": "Analysis, engineering, warehousing, pipelines, and visualization"
+    },
+    "devops_cloud": {
+      "label": "DevOps / Cloud",
+      "description": "Delivery, infrastructure, observability, and cloud platforms"
+    },
+    "security": {
+      "label": "Security",
+      "description": "Application security, identity, cryptography, and offensive security"
+    },
+    "blockchain_web3": {
+      "label": "Blockchain / Web3",
+      "description": "Smart contracts, decentralized applications, and protocols"
+    },
+    "systems": {
+      "label": "Systems",
+      "description": "Low-level software, performance, compilers, networking, and operating systems"
+    },
+    "game_dev": {
+      "label": "Game Development",
+      "description": "Games, real-time graphics, engines, and interactive worlds"
+    },
+    "embedded_iot": {
+      "label": "Embedded / IoT",
+      "description": "Microcontrollers, robotics, electronics, and connected devices"
+    },
+    "design_ui_ux": {
+      "label": "Design / UI / UX",
+      "description": "Product design, research, accessibility, and visual communication"
+    }
+  },
+  "technologies": {
+    "html": {
+      "label": "HTML",
+      "aliases": ["html5"],
+      "domains": ["frontend"],
+      "detect": { "extensions": [".html", ".htm"] }
+    },
+    "css": {
+      "label": "CSS",
+      "aliases": ["css3"],
+      "domains": ["frontend", "design_ui_ux"],
+      "detect": { "extensions": [".css"] }
+    },
+    "sass": {
+      "label": "Sass / SCSS",
+      "aliases": ["scss"],
+      "domains": ["frontend"],
+      "detect": { "npm": ["sass"], "extensions": [".scss", ".sass"] }
+    },
+    "javascript": {
+      "label": "JavaScript",
+      "aliases": ["js", "ecmascript"],
+      "domains": ["frontend", "backend"],
+      "detect": { "language": ["JavaScript"] }
+    },
+    "typescript": {
+      "label": "TypeScript",
+      "aliases": ["ts"],
+      "domains": ["frontend", "backend"],
+      "detect": { "language": ["TypeScript"] }
+    },
+    "react": {
+      "label": "React",
+      "aliases": ["reactjs", "react.js"],
+      "domains": ["frontend"],
+      "detect": { "npm": ["react"] }
+    },
+    "nextjs": {
+      "label": "Next.js",
+      "aliases": ["next", "nextjs"],
+      "domains": ["frontend", "backend"],
+      "detect": { "npm": ["next"] }
+    },
+    "vue": {
+      "label": "Vue",
+      "aliases": ["vuejs", "vue.js"],
+      "domains": ["frontend"],
+      "detect": { "npm": ["vue"] }
+    },
+    "nuxt": {
+      "label": "Nuxt",
+      "aliases": ["nuxtjs"],
+      "domains": ["frontend", "backend"],
+      "detect": { "npm": ["nuxt"] }
+    },
+    "angular": {
+      "label": "Angular",
+      "aliases": ["angularjs"],
+      "domains": ["frontend"],
+      "detect": { "npm": ["@angular/core"] }
+    },
+    "svelte": {
+      "label": "Svelte",
+      "aliases": [],
+      "domains": ["frontend"],
+      "detect": { "npm": ["svelte"] }
+    },
+    "sveltekit": {
+      "label": "SvelteKit",
+      "aliases": ["svelte kit"],
+      "domains": ["frontend", "backend"],
+      "detect": { "npm": ["@sveltejs/kit"] }
+    },
+    "solidjs": {
+      "label": "SolidJS",
+      "aliases": ["solid"],
+      "domains": ["frontend"],
+      "detect": { "npm": ["solid-js"] }
+    },
+    "qwik": {
+      "label": "Qwik",
+      "aliases": [],
+      "domains": ["frontend"],
+      "detect": { "npm": ["@builder.io/qwik"] }
+    },
+    "astro": {
+      "label": "Astro",
+      "aliases": ["astrojs"],
+      "domains": ["frontend"],
+      "detect": { "npm": ["astro"] }
+    },
+    "tailwindcss": {
+      "label": "Tailwind CSS",
+      "aliases": ["tailwind"],
+      "domains": ["frontend", "design_ui_ux"],
+      "detect": { "npm": ["tailwindcss"] }
+    },
+    "bootstrap": {
+      "label": "Bootstrap",
+      "aliases": [],
+      "domains": ["frontend", "design_ui_ux"],
+      "detect": { "npm": ["bootstrap"] }
+    },
+    "material_ui": {
+      "label": "Material UI",
+      "aliases": ["mui"],
+      "domains": ["frontend", "design_ui_ux"],
+      "detect": { "npm": ["@mui/material"] }
+    },
+    "vite": {
+      "label": "Vite",
+      "aliases": [],
+      "domains": ["frontend"],
+      "detect": { "npm": ["vite"] }
+    },
+    "webpack": {
+      "label": "webpack",
+      "aliases": [],
+      "domains": ["frontend"],
+      "detect": { "npm": ["webpack"] }
+    },
+    "redux": {
+      "label": "Redux",
+      "aliases": ["redux toolkit"],
+      "domains": ["frontend"],
+      "detect": { "npm": ["redux", "@reduxjs/toolkit"] }
+    },
+    "zustand": {
+      "label": "Zustand",
+      "aliases": [],
+      "domains": ["frontend"],
+      "detect": { "npm": ["zustand"] }
+    },
+    "tanstack_query": {
+      "label": "TanStack Query",
+      "aliases": ["react query"],
+      "domains": ["frontend"],
+      "detect": { "npm": ["@tanstack/react-query"] }
+    },
+    "threejs": {
+      "label": "Three.js",
+      "aliases": ["threejs"],
+      "domains": ["frontend", "game_dev"],
+      "detect": { "npm": ["three"] }
+    },
+    "d3": {
+      "label": "D3.js",
+      "aliases": ["d3js"],
+      "domains": ["frontend", "data"],
+      "detect": { "npm": ["d3"] }
+    },
+    "web_components": {
+      "label": "Web Components",
+      "aliases": ["custom elements"],
+      "domains": ["frontend"],
+      "detect": { "api": ["customElements.define", "ShadowRoot"] }
+    },
+    "storybook": {
+      "label": "Storybook",
+      "aliases": [],
+      "domains": ["frontend", "design_ui_ux"],
+      "detect": { "npm": ["storybook", "@storybook/react"] }
+    },
+    "electron": {
+      "label": "Electron",
+      "aliases": [],
+      "domains": ["frontend", "systems"],
+      "detect": { "npm": ["electron"] }
+    },
+
+    "nodejs": {
+      "label": "Node.js",
+      "aliases": ["node", "node.js"],
+      "domains": ["backend"],
+      "detect": { "files": ["package.json"], "runtime": ["node"] }
+    },
+    "express": {
+      "label": "Express",
+      "aliases": ["expressjs"],
+      "domains": ["backend"],
+      "detect": { "npm": ["express"] }
+    },
+    "fastify": {
+      "label": "Fastify",
+      "aliases": [],
+      "domains": ["backend"],
+      "detect": { "npm": ["fastify"] }
+    },
+    "nestjs": {
+      "label": "NestJS",
+      "aliases": ["nest"],
+      "domains": ["backend"],
+      "detect": { "npm": ["@nestjs/core"] }
+    },
+    "bun": {
+      "label": "Bun",
+      "aliases": [],
+      "domains": ["backend", "systems"],
+      "detect": { "files": ["bun.lock", "bun.lockb"] }
+    },
+    "deno": {
+      "label": "Deno",
+      "aliases": [],
+      "domains": ["backend"],
+      "detect": { "files": ["deno.json", "deno.jsonc"] }
+    },
+    "python": {
+      "label": "Python",
+      "aliases": ["py"],
+      "domains": ["backend", "ai_ml", "data"],
+      "detect": { "language": ["Python"] }
+    },
+    "django": {
+      "label": "Django",
+      "aliases": [],
+      "domains": ["backend"],
+      "detect": { "pip": ["django"] }
+    },
+    "flask": {
+      "label": "Flask",
+      "aliases": [],
+      "domains": ["backend"],
+      "detect": { "pip": ["flask"] }
+    },
+    "fastapi": {
+      "label": "FastAPI",
+      "aliases": [],
+      "domains": ["backend"],
+      "detect": { "pip": ["fastapi"] }
+    },
+    "java": {
+      "label": "Java",
+      "aliases": [],
+      "domains": ["backend", "mobile", "systems"],
+      "detect": { "language": ["Java"] }
+    },
+    "spring_boot": {
+      "label": "Spring Boot",
+      "aliases": ["spring"],
+      "domains": ["backend"],
+      "detect": { "maven": ["org.springframework.boot"], "gradle": ["org.springframework.boot"] }
+    },
+    "kotlin": {
+      "label": "Kotlin",
+      "aliases": [],
+      "domains": ["backend", "mobile"],
+      "detect": { "language": ["Kotlin"] }
+    },
+    "go": {
+      "label": "Go",
+      "aliases": ["golang"],
+      "domains": ["backend", "systems"],
+      "detect": { "language": ["Go"] }
+    },
+    "rust": {
+      "label": "Rust",
+      "aliases": [],
+      "domains": ["backend", "systems", "blockchain_web3"],
+      "detect": { "language": ["Rust"] }
+    },
+    "php": {
+      "label": "PHP",
+      "aliases": [],
+      "domains": ["backend"],
+      "detect": { "language": ["PHP"] }
+    },
+    "laravel": {
+      "label": "Laravel",
+      "aliases": [],
+      "domains": ["backend"],
+      "detect": { "composer": ["laravel/framework"] }
+    },
+    "ruby": {
+      "label": "Ruby",
+      "aliases": [],
+      "domains": ["backend"],
+      "detect": { "language": ["Ruby"] }
+    },
+    "rails": {
+      "label": "Ruby on Rails",
+      "aliases": ["rails", "ror"],
+      "domains": ["backend"],
+      "detect": { "gem": ["rails"] }
+    },
+    "csharp": {
+      "label": "C#",
+      "aliases": ["c sharp"],
+      "domains": ["backend", "game_dev"],
+      "detect": { "language": ["C#"] }
+    },
+    "dotnet": {
+      "label": ".NET",
+      "aliases": ["dotnet", "asp.net"],
+      "domains": ["backend"],
+      "detect": { "files": ["*.csproj", "*.sln"] }
+    },
+    "graphql": {
+      "label": "GraphQL",
+      "aliases": [],
+      "domains": ["backend", "frontend"],
+      "detect": { "npm": ["graphql"], "pip": ["graphene"] }
+    },
+    "grpc": {
+      "label": "gRPC",
+      "aliases": [],
+      "domains": ["backend"],
+      "detect": { "files": ["*.proto"], "npm": ["@grpc/grpc-js"] }
+    },
+    "rest_api": {
+      "label": "REST APIs",
+      "aliases": ["rest", "restful"],
+      "domains": ["backend"],
+      "detect": { "paths": ["routes", "controllers"] }
+    },
+    "websockets": {
+      "label": "WebSockets",
+      "aliases": ["websocket"],
+      "domains": ["backend", "frontend"],
+      "detect": { "npm": ["ws", "socket.io"] }
+    },
+    "redis": {
+      "label": "Redis",
+      "aliases": [],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["redis", "ioredis"], "pip": ["redis"] }
+    },
+    "rabbitmq": {
+      "label": "RabbitMQ",
+      "aliases": ["amqp"],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["amqplib"], "pip": ["pika"] }
+    },
+    "kafka": {
+      "label": "Apache Kafka",
+      "aliases": ["kafka"],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["kafkajs"], "pip": ["confluent-kafka"] }
+    },
+    "elasticsearch": {
+      "label": "Elasticsearch",
+      "aliases": ["elastic"],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["@elastic/elasticsearch"], "pip": ["elasticsearch"] }
+    },
+    "prisma": {
+      "label": "Prisma",
+      "aliases": [],
+      "domains": ["backend"],
+      "detect": { "npm": ["@prisma/client"], "files": ["schema.prisma"] }
+    },
+    "drizzle": {
+      "label": "Drizzle ORM",
+      "aliases": ["drizzle"],
+      "domains": ["backend"],
+      "detect": { "npm": ["drizzle-orm"] }
+    },
+
+    "postgresql": {
+      "label": "PostgreSQL",
+      "aliases": ["postgres", "psql"],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["pg"], "pip": ["psycopg", "psycopg2"] }
+    },
+    "mysql": {
+      "label": "MySQL",
+      "aliases": [],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["mysql", "mysql2"], "pip": ["mysqlclient"] }
+    },
+    "mariadb": {
+      "label": "MariaDB",
+      "aliases": [],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["mariadb"] }
+    },
+    "sqlite": {
+      "label": "SQLite",
+      "aliases": [],
+      "domains": ["backend", "mobile", "data"],
+      "detect": { "npm": ["sqlite3", "better-sqlite3"], "files": ["*.sqlite", "*.db"] }
+    },
+    "mongodb": {
+      "label": "MongoDB",
+      "aliases": ["mongo"],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["mongodb", "mongoose"], "pip": ["pymongo"] }
+    },
+    "cassandra": {
+      "label": "Apache Cassandra",
+      "aliases": ["cassandra"],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["cassandra-driver"], "pip": ["cassandra-driver"] }
+    },
+    "dynamodb": {
+      "label": "Amazon DynamoDB",
+      "aliases": ["dynamodb"],
+      "domains": ["backend", "data", "devops_cloud"],
+      "detect": { "npm": ["@aws-sdk/client-dynamodb"] }
+    },
+    "firestore": {
+      "label": "Cloud Firestore",
+      "aliases": ["firestore"],
+      "domains": ["backend", "mobile", "data"],
+      "detect": { "npm": ["firebase", "@google-cloud/firestore"] }
+    },
+    "supabase": {
+      "label": "Supabase",
+      "aliases": [],
+      "domains": ["backend", "frontend"],
+      "detect": { "npm": ["@supabase/supabase-js"] }
+    },
+    "neo4j": {
+      "label": "Neo4j",
+      "aliases": [],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["neo4j-driver"], "pip": ["neo4j"] }
+    },
+    "influxdb": {
+      "label": "InfluxDB",
+      "aliases": [],
+      "domains": ["backend", "data", "embedded_iot"],
+      "detect": { "npm": ["@influxdata/influxdb-client"] }
+    },
+    "clickhouse": {
+      "label": "ClickHouse",
+      "aliases": [],
+      "domains": ["backend", "data"],
+      "detect": { "npm": ["@clickhouse/client"] }
+    },
+    "snowflake": {
+      "label": "Snowflake",
+      "aliases": [],
+      "domains": ["data", "devops_cloud"],
+      "detect": { "pip": ["snowflake-connector-python"] }
+    },
+    "bigquery": {
+      "label": "BigQuery",
+      "aliases": ["google bigquery"],
+      "domains": ["data", "devops_cloud"],
+      "detect": { "npm": ["@google-cloud/bigquery"], "pip": ["google-cloud-bigquery"] }
+    },
+    "duckdb": {
+      "label": "DuckDB",
+      "aliases": [],
+      "domains": ["data"],
+      "detect": { "npm": ["duckdb"], "pip": ["duckdb"] }
+    },
+
+    "react_native": {
+      "label": "React Native",
+      "aliases": ["react-native"],
+      "domains": ["mobile"],
+      "detect": { "npm": ["react-native"] }
+    },
+    "expo": {
+      "label": "Expo",
+      "aliases": [],
+      "domains": ["mobile"],
+      "detect": { "npm": ["expo"] }
+    },
+    "flutter": {
+      "label": "Flutter",
+      "aliases": [],
+      "domains": ["mobile"],
+      "detect": { "files": ["pubspec.yaml"], "sdk": ["flutter"] }
+    },
+    "dart": {
+      "label": "Dart",
+      "aliases": [],
+      "domains": ["mobile", "frontend"],
+      "detect": { "language": ["Dart"] }
+    },
+    "android": {
+      "label": "Android",
+      "aliases": ["android sdk"],
+      "domains": ["mobile"],
+      "detect": { "paths": ["app/src/main/AndroidManifest.xml"] }
+    },
+    "jetpack_compose": {
+      "label": "Jetpack Compose",
+      "aliases": ["compose ui"],
+      "domains": ["mobile"],
+      "detect": { "gradle": ["androidx.compose"] }
+    },
+    "swift": {
+      "label": "Swift",
+      "aliases": [],
+      "domains": ["mobile", "systems"],
+      "detect": { "language": ["Swift"] }
+    },
+    "swiftui": {
+      "label": "SwiftUI",
+      "aliases": [],
+      "domains": ["mobile", "design_ui_ux"],
+      "detect": { "imports": ["SwiftUI"] }
+    },
+    "ios": {
+      "label": "iOS",
+      "aliases": ["iphone", "ipad"],
+      "domains": ["mobile"],
+      "detect": { "files": ["*.xcodeproj", "*.xcworkspace"] }
+    },
+    "ionic": {
+      "label": "Ionic",
+      "aliases": [],
+      "domains": ["mobile", "frontend"],
+      "detect": { "npm": ["@ionic/core"] }
+    },
+    "capacitor": {
+      "label": "Capacitor",
+      "aliases": [],
+      "domains": ["mobile"],
+      "detect": { "npm": ["@capacitor/core"] }
+    },
+    "cordova": {
+      "label": "Apache Cordova",
+      "aliases": ["cordova"],
+      "domains": ["mobile"],
+      "detect": { "npm": ["cordova"] }
+    },
+    "dotnet_maui": {
+      "label": ".NET MAUI",
+      "aliases": ["maui", "xamarin"],
+      "domains": ["mobile"],
+      "detect": { "files": ["MauiProgram.cs"] }
+    },
+
+    "numpy": {
+      "label": "NumPy",
+      "aliases": [],
+      "domains": ["ai_ml", "data"],
+      "detect": { "pip": ["numpy"] }
+    },
+    "pandas": {
+      "label": "pandas",
+      "aliases": [],
+      "domains": ["ai_ml", "data"],
+      "detect": { "pip": ["pandas"] }
+    },
+    "polars": {
+      "label": "Polars",
+      "aliases": [],
+      "domains": ["data"],
+      "detect": { "pip": ["polars"], "cargo": ["polars"] }
+    },
+    "scipy": {
+      "label": "SciPy",
+      "aliases": [],
+      "domains": ["ai_ml", "data"],
+      "detect": { "pip": ["scipy"] }
+    },
+    "scikit_learn": {
+      "label": "scikit-learn",
+      "aliases": ["sklearn"],
+      "domains": ["ai_ml", "data"],
+      "detect": { "pip": ["scikit-learn"] }
+    },
+    "pytorch": {
+      "label": "PyTorch",
+      "aliases": ["torch"],
+      "domains": ["ai_ml"],
+      "detect": { "pip": ["torch"] }
+    },
+    "tensorflow": {
+      "label": "TensorFlow",
+      "aliases": ["tf"],
+      "domains": ["ai_ml"],
+      "detect": { "pip": ["tensorflow"] }
+    },
+    "keras": {
+      "label": "Keras",
+      "aliases": [],
+      "domains": ["ai_ml"],
+      "detect": { "pip": ["keras"] }
+    },
+    "jax": { "label": "JAX", "aliases": [], "domains": ["ai_ml"], "detect": { "pip": ["jax"] } },
+    "hugging_face": {
+      "label": "Hugging Face",
+      "aliases": ["huggingface", "hf"],
+      "domains": ["ai_ml"],
+      "detect": { "pip": ["huggingface-hub"] }
+    },
+    "transformers": {
+      "label": "Transformers",
+      "aliases": ["hf transformers"],
+      "domains": ["ai_ml"],
+      "detect": { "pip": ["transformers"] }
+    },
+    "large_language_models": {
+      "label": "Large Language Models",
+      "aliases": ["llm", "llms", "generative ai"],
+      "domains": ["ai_ml"],
+      "detect": { "concepts": ["prompt", "tokenizer", "completion"] }
+    },
+    "openai_api": {
+      "label": "OpenAI API",
+      "aliases": ["openai"],
+      "domains": ["ai_ml", "backend"],
+      "detect": { "npm": ["openai"], "pip": ["openai"] }
+    },
+    "gemini_api": {
+      "label": "Gemini API",
+      "aliases": ["google gemini"],
+      "domains": ["ai_ml", "backend"],
+      "detect": { "npm": ["@google/genai"], "pip": ["google-genai"] }
+    },
+    "langchain": {
+      "label": "LangChain",
+      "aliases": [],
+      "domains": ["ai_ml"],
+      "detect": { "npm": ["langchain"], "pip": ["langchain"] }
+    },
+    "llamaindex": {
+      "label": "LlamaIndex",
+      "aliases": ["llama index"],
+      "domains": ["ai_ml"],
+      "detect": { "npm": ["llamaindex"], "pip": ["llama-index"] }
+    },
+    "opencv": {
+      "label": "OpenCV",
+      "aliases": ["cv2"],
+      "domains": ["ai_ml", "embedded_iot"],
+      "detect": { "pip": ["opencv-python"] }
+    },
+    "yolo": {
+      "label": "YOLO",
+      "aliases": ["ultralytics"],
+      "domains": ["ai_ml"],
+      "detect": { "pip": ["ultralytics"] }
+    },
+    "natural_language_processing": {
+      "label": "Natural Language Processing",
+      "aliases": ["nlp"],
+      "domains": ["ai_ml"],
+      "detect": { "concepts": ["tokenization", "named entity recognition"] }
+    },
+    "computer_vision": {
+      "label": "Computer Vision",
+      "aliases": ["vision", "cv"],
+      "domains": ["ai_ml"],
+      "detect": { "concepts": ["object detection", "image segmentation"] }
+    },
+    "reinforcement_learning": {
+      "label": "Reinforcement Learning",
+      "aliases": ["rl"],
+      "domains": ["ai_ml"],
+      "detect": { "pip": ["gymnasium", "stable-baselines3"] }
+    },
+    "xgboost": {
+      "label": "XGBoost",
+      "aliases": [],
+      "domains": ["ai_ml", "data"],
+      "detect": { "pip": ["xgboost"] }
+    },
+    "lightgbm": {
+      "label": "LightGBM",
+      "aliases": [],
+      "domains": ["ai_ml", "data"],
+      "detect": { "pip": ["lightgbm"] }
+    },
+    "mlflow": {
+      "label": "MLflow",
+      "aliases": [],
+      "domains": ["ai_ml", "devops_cloud"],
+      "detect": { "pip": ["mlflow"] }
+    },
+    "weights_biases": {
+      "label": "Weights & Biases",
+      "aliases": ["wandb"],
+      "domains": ["ai_ml"],
+      "detect": { "pip": ["wandb"] }
+    },
+    "onnx": {
+      "label": "ONNX",
+      "aliases": [],
+      "domains": ["ai_ml", "embedded_iot"],
+      "detect": { "pip": ["onnx", "onnxruntime"] }
+    },
+    "spacy": {
+      "label": "spaCy",
+      "aliases": [],
+      "domains": ["ai_ml"],
+      "detect": { "pip": ["spacy"] }
+    },
+    "nltk": { "label": "NLTK", "aliases": [], "domains": ["ai_ml"], "detect": { "pip": ["nltk"] } },
+    "streamlit": {
+      "label": "Streamlit",
+      "aliases": [],
+      "domains": ["ai_ml", "data", "frontend"],
+      "detect": { "pip": ["streamlit"] }
+    },
+    "gradio": {
+      "label": "Gradio",
+      "aliases": [],
+      "domains": ["ai_ml", "frontend"],
+      "detect": { "pip": ["gradio"] }
+    },
+    "vector_databases": {
+      "label": "Vector Databases",
+      "aliases": ["vector db", "embeddings database"],
+      "domains": ["ai_ml", "data"],
+      "detect": { "pip": ["chromadb", "pinecone", "weaviate-client"] }
+    },
+
+    "apache_spark": {
+      "label": "Apache Spark",
+      "aliases": ["spark", "pyspark"],
+      "domains": ["data"],
+      "detect": { "pip": ["pyspark"] }
+    },
+    "hadoop": {
+      "label": "Apache Hadoop",
+      "aliases": ["hdfs"],
+      "domains": ["data"],
+      "detect": { "maven": ["org.apache.hadoop"] }
+    },
+    "airflow": {
+      "label": "Apache Airflow",
+      "aliases": ["airflow"],
+      "domains": ["data", "devops_cloud"],
+      "detect": { "pip": ["apache-airflow"] }
+    },
+    "dbt": {
+      "label": "dbt",
+      "aliases": ["data build tool"],
+      "domains": ["data"],
+      "detect": { "files": ["dbt_project.yml"] }
+    },
+    "jupyter": {
+      "label": "Jupyter",
+      "aliases": ["notebook", "jupyterlab"],
+      "domains": ["data", "ai_ml"],
+      "detect": { "extensions": [".ipynb"] }
+    },
+    "matplotlib": {
+      "label": "Matplotlib",
+      "aliases": [],
+      "domains": ["data"],
+      "detect": { "pip": ["matplotlib"] }
+    },
+    "seaborn": {
+      "label": "Seaborn",
+      "aliases": [],
+      "domains": ["data"],
+      "detect": { "pip": ["seaborn"] }
+    },
+    "plotly": {
+      "label": "Plotly",
+      "aliases": ["dash"],
+      "domains": ["data", "frontend"],
+      "detect": { "npm": ["plotly.js"], "pip": ["plotly", "dash"] }
+    },
+    "power_bi": {
+      "label": "Power BI",
+      "aliases": ["powerbi"],
+      "domains": ["data"],
+      "detect": { "extensions": [".pbix"] }
+    },
+    "tableau": {
+      "label": "Tableau",
+      "aliases": [],
+      "domains": ["data"],
+      "detect": { "extensions": [".twb", ".twbx"] }
+    },
+    "data_engineering": {
+      "label": "Data Engineering",
+      "aliases": ["data pipelines"],
+      "domains": ["data"],
+      "detect": { "concepts": ["etl", "warehouse", "pipeline"] }
+    },
+    "data_analysis": {
+      "label": "Data Analysis",
+      "aliases": ["analytics"],
+      "domains": ["data"],
+      "detect": { "concepts": ["exploratory analysis", "statistical analysis"] }
+    },
+
+    "docker": {
+      "label": "Docker",
+      "aliases": ["containers"],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["Dockerfile", "docker-compose.yml", "compose.yml"] }
+    },
+    "kubernetes": {
+      "label": "Kubernetes",
+      "aliases": ["k8s"],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["Chart.yaml", "kustomization.yaml"], "paths": ["k8s", "kubernetes"] }
+    },
+    "helm": {
+      "label": "Helm",
+      "aliases": ["helm charts"],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["Chart.yaml", "values.yaml"] }
+    },
+    "terraform": {
+      "label": "Terraform",
+      "aliases": ["iac"],
+      "domains": ["devops_cloud"],
+      "detect": { "extensions": [".tf", ".tfvars"] }
+    },
+    "ansible": {
+      "label": "Ansible",
+      "aliases": [],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["ansible.cfg", "playbook.yml"] }
+    },
+    "github_actions": {
+      "label": "GitHub Actions",
+      "aliases": ["gha"],
+      "domains": ["devops_cloud"],
+      "detect": { "paths": [".github/workflows"] }
+    },
+    "gitlab_ci": {
+      "label": "GitLab CI/CD",
+      "aliases": ["gitlab ci"],
+      "domains": ["devops_cloud"],
+      "detect": { "files": [".gitlab-ci.yml"] }
+    },
+    "jenkins": {
+      "label": "Jenkins",
+      "aliases": [],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["Jenkinsfile"] }
+    },
+    "aws": {
+      "label": "Amazon Web Services",
+      "aliases": ["aws"],
+      "domains": ["devops_cloud"],
+      "detect": { "npm": ["@aws-sdk/client-s3"], "paths": [".aws"] }
+    },
+    "azure": {
+      "label": "Microsoft Azure",
+      "aliases": ["azure"],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["azure-pipelines.yml"] }
+    },
+    "gcp": {
+      "label": "Google Cloud",
+      "aliases": ["gcp", "google cloud platform"],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["app.yaml", "cloudbuild.yaml"] }
+    },
+    "vercel": {
+      "label": "Vercel",
+      "aliases": [],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["vercel.json"] }
+    },
+    "netlify": {
+      "label": "Netlify",
+      "aliases": [],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["netlify.toml"] }
+    },
+    "render": {
+      "label": "Render",
+      "aliases": ["render.com"],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["render.yaml"] }
+    },
+    "cloudflare": {
+      "label": "Cloudflare",
+      "aliases": ["workers", "pages"],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["wrangler.toml", "wrangler.jsonc"] }
+    },
+    "linux": {
+      "label": "Linux",
+      "aliases": ["gnu/linux"],
+      "domains": ["devops_cloud", "systems"],
+      "detect": { "files": ["*.service"], "paths": ["/etc"] }
+    },
+    "bash": {
+      "label": "Bash",
+      "aliases": ["shell", "sh"],
+      "domains": ["devops_cloud", "systems"],
+      "detect": { "language": ["Shell"] }
+    },
+    "powershell": {
+      "label": "PowerShell",
+      "aliases": ["pwsh"],
+      "domains": ["devops_cloud", "systems"],
+      "detect": { "extensions": [".ps1", ".psm1"] }
+    },
+    "prometheus": {
+      "label": "Prometheus",
+      "aliases": [],
+      "domains": ["devops_cloud"],
+      "detect": { "files": ["prometheus.yml"] }
+    },
+    "grafana": {
+      "label": "Grafana",
+      "aliases": [],
+      "domains": ["devops_cloud", "data"],
+      "detect": { "paths": ["grafana/provisioning"] }
+    },
+    "opentelemetry": {
+      "label": "OpenTelemetry",
+      "aliases": ["otel"],
+      "domains": ["devops_cloud"],
+      "detect": { "npm": ["@opentelemetry/api"], "pip": ["opentelemetry-api"] }
+    },
+    "nginx": {
+      "label": "NGINX",
+      "aliases": [],
+      "domains": ["devops_cloud", "backend"],
+      "detect": { "files": ["nginx.conf"] }
+    },
+    "serverless": {
+      "label": "Serverless",
+      "aliases": ["faas", "functions as a service"],
+      "domains": ["devops_cloud", "backend"],
+      "detect": { "files": ["serverless.yml", "serverless.yaml"] }
+    },
+    "git": {
+      "label": "Git",
+      "aliases": ["version control"],
+      "domains": ["devops_cloud"],
+      "detect": { "paths": [".git"] }
+    },
+
+    "owasp": {
+      "label": "OWASP",
+      "aliases": ["owasp top 10"],
+      "domains": ["security"],
+      "detect": { "concepts": ["owasp", "top 10"] }
+    },
+    "penetration_testing": {
+      "label": "Penetration Testing",
+      "aliases": ["pentesting", "offensive security"],
+      "domains": ["security"],
+      "detect": { "concepts": ["exploit", "reconnaissance"] }
+    },
+    "cryptography": {
+      "label": "Cryptography",
+      "aliases": ["crypto"],
+      "domains": ["security", "systems"],
+      "detect": { "concepts": ["encryption", "signature", "cipher"] }
+    },
+    "oauth": {
+      "label": "OAuth 2.0",
+      "aliases": ["oauth2"],
+      "domains": ["security", "backend"],
+      "detect": { "npm": ["oauth4webapi", "passport-oauth2"] }
+    },
+    "openid_connect": {
+      "label": "OpenID Connect",
+      "aliases": ["oidc"],
+      "domains": ["security", "backend"],
+      "detect": { "npm": ["openid-client"] }
+    },
+    "jwt": {
+      "label": "JSON Web Tokens",
+      "aliases": ["jwt"],
+      "domains": ["security", "backend"],
+      "detect": { "npm": ["jsonwebtoken", "jose"], "pip": ["pyjwt"] }
+    },
+    "burp_suite": {
+      "label": "Burp Suite",
+      "aliases": ["burp"],
+      "domains": ["security"],
+      "detect": { "extensions": [".burp"] }
+    },
+    "nmap": {
+      "label": "Nmap",
+      "aliases": [],
+      "domains": ["security", "systems"],
+      "detect": { "commands": ["nmap"] }
+    },
+    "wireshark": {
+      "label": "Wireshark",
+      "aliases": ["tshark"],
+      "domains": ["security", "systems"],
+      "detect": { "extensions": [".pcap", ".pcapng"] }
+    },
+    "metasploit": {
+      "label": "Metasploit",
+      "aliases": [],
+      "domains": ["security"],
+      "detect": { "commands": ["msfconsole"] }
+    },
+    "static_analysis": {
+      "label": "Static Application Security Testing",
+      "aliases": ["sast", "static analysis"],
+      "domains": ["security", "devops_cloud"],
+      "detect": { "files": ["semgrep.yml", "codeql.yml"] }
+    },
+    "siem": {
+      "label": "SIEM",
+      "aliases": ["security information event management"],
+      "domains": ["security"],
+      "detect": { "concepts": ["security events", "log correlation"] }
+    },
+    "ctf": {
+      "label": "Capture the Flag",
+      "aliases": ["ctf"],
+      "domains": ["security"],
+      "detect": { "paths": ["writeups", "challenges"] }
+    },
+    "secure_coding": {
+      "label": "Secure Coding",
+      "aliases": ["application security", "appsec"],
+      "domains": ["security"],
+      "detect": { "concepts": ["input validation", "threat model"] }
+    },
+
+    "solidity": {
+      "label": "Solidity",
+      "aliases": [],
+      "domains": ["blockchain_web3"],
+      "detect": { "language": ["Solidity"] }
+    },
+    "ethereum": {
+      "label": "Ethereum",
+      "aliases": ["evm"],
+      "domains": ["blockchain_web3"],
+      "detect": { "concepts": ["ethereum", "evm"] }
+    },
+    "hardhat": {
+      "label": "Hardhat",
+      "aliases": [],
+      "domains": ["blockchain_web3"],
+      "detect": { "npm": ["hardhat"] }
+    },
+    "foundry": {
+      "label": "Foundry",
+      "aliases": ["forge"],
+      "domains": ["blockchain_web3"],
+      "detect": { "files": ["foundry.toml"] }
+    },
+    "ethersjs": {
+      "label": "ethers.js",
+      "aliases": ["ethers"],
+      "domains": ["blockchain_web3", "frontend"],
+      "detect": { "npm": ["ethers"] }
+    },
+    "web3js": {
+      "label": "Web3.js",
+      "aliases": ["web3"],
+      "domains": ["blockchain_web3", "frontend"],
+      "detect": { "npm": ["web3"] }
+    },
+    "solana": {
+      "label": "Solana",
+      "aliases": [],
+      "domains": ["blockchain_web3"],
+      "detect": { "npm": ["@solana/web3.js"], "cargo": ["solana-program"] }
+    },
+    "smart_contracts": {
+      "label": "Smart Contracts",
+      "aliases": ["contracts"],
+      "domains": ["blockchain_web3"],
+      "detect": { "paths": ["contracts"] }
+    },
+    "defi": {
+      "label": "Decentralized Finance",
+      "aliases": ["defi"],
+      "domains": ["blockchain_web3"],
+      "detect": { "concepts": ["liquidity pool", "automated market maker"] }
+    },
+    "nft": {
+      "label": "NFT Standards",
+      "aliases": ["nfts", "erc721", "erc1155"],
+      "domains": ["blockchain_web3"],
+      "detect": { "concepts": ["ERC721", "ERC1155"] }
+    },
+    "polygon": {
+      "label": "Polygon",
+      "aliases": ["matic"],
+      "domains": ["blockchain_web3"],
+      "detect": { "concepts": ["polygon", "matic"] }
+    },
+
+    "c": {
+      "label": "C",
+      "aliases": [],
+      "domains": ["systems", "embedded_iot"],
+      "detect": { "language": ["C"] }
+    },
+    "cpp": {
+      "label": "C++",
+      "aliases": ["cpp"],
+      "domains": ["systems", "game_dev", "embedded_iot"],
+      "detect": { "language": ["C++"] }
+    },
+    "assembly": {
+      "label": "Assembly",
+      "aliases": ["asm"],
+      "domains": ["systems", "embedded_iot"],
+      "detect": { "language": ["Assembly"] }
+    },
+    "webassembly": {
+      "label": "WebAssembly",
+      "aliases": ["wasm"],
+      "domains": ["systems", "frontend"],
+      "detect": { "extensions": [".wasm", ".wat"] }
+    },
+    "llvm": {
+      "label": "LLVM",
+      "aliases": [],
+      "domains": ["systems"],
+      "detect": { "concepts": ["llvm ir", "clang"] }
+    },
+    "compilers": {
+      "label": "Compiler Engineering",
+      "aliases": ["compilers", "parsers"],
+      "domains": ["systems"],
+      "detect": { "concepts": ["lexer", "parser", "code generation"] }
+    },
+    "operating_systems": {
+      "label": "Operating Systems",
+      "aliases": ["os development", "kernel development"],
+      "domains": ["systems"],
+      "detect": { "concepts": ["scheduler", "virtual memory", "syscall"] }
+    },
+    "networking": {
+      "label": "Computer Networking",
+      "aliases": ["networks"],
+      "domains": ["systems", "security"],
+      "detect": { "concepts": ["tcp", "udp", "routing"] }
+    },
+    "concurrency": {
+      "label": "Concurrency",
+      "aliases": ["parallel programming", "multithreading"],
+      "domains": ["systems", "backend"],
+      "detect": { "concepts": ["threads", "async", "mutex"] }
+    },
+    "performance_engineering": {
+      "label": "Performance Engineering",
+      "aliases": ["optimization", "profiling"],
+      "domains": ["systems"],
+      "detect": { "concepts": ["benchmark", "profiler", "latency"] }
+    },
+    "cmake": {
+      "label": "CMake",
+      "aliases": [],
+      "domains": ["systems", "embedded_iot"],
+      "detect": { "files": ["CMakeLists.txt"] }
+    },
+
+    "unity": {
+      "label": "Unity",
+      "aliases": ["unity3d"],
+      "domains": ["game_dev"],
+      "detect": { "files": ["ProjectSettings/ProjectVersion.txt"] }
+    },
+    "unreal_engine": {
+      "label": "Unreal Engine",
+      "aliases": ["unreal", "ue5", "ue4"],
+      "domains": ["game_dev"],
+      "detect": { "extensions": [".uproject"] }
+    },
+    "godot": {
+      "label": "Godot",
+      "aliases": [],
+      "domains": ["game_dev"],
+      "detect": { "files": ["project.godot"] }
+    },
+    "blender": {
+      "label": "Blender",
+      "aliases": [],
+      "domains": ["game_dev", "design_ui_ux"],
+      "detect": { "extensions": [".blend"] }
+    },
+    "phaser": {
+      "label": "Phaser",
+      "aliases": ["phaserjs"],
+      "domains": ["game_dev", "frontend"],
+      "detect": { "npm": ["phaser"] }
+    },
+    "pygame": {
+      "label": "Pygame",
+      "aliases": [],
+      "domains": ["game_dev"],
+      "detect": { "pip": ["pygame"] }
+    },
+    "game_design": {
+      "label": "Game Design",
+      "aliases": ["level design", "gameplay design"],
+      "domains": ["game_dev", "design_ui_ux"],
+      "detect": { "concepts": ["game loop", "level design", "game mechanics"] }
+    },
+    "game_ai": {
+      "label": "Game AI",
+      "aliases": ["npc ai"],
+      "domains": ["game_dev", "ai_ml"],
+      "detect": { "concepts": ["pathfinding", "behavior tree"] }
+    },
+    "webgl": {
+      "label": "WebGL",
+      "aliases": [],
+      "domains": ["game_dev", "frontend"],
+      "detect": { "api": ["WebGLRenderingContext"] }
+    },
+    "openxr": {
+      "label": "OpenXR",
+      "aliases": ["xr", "vr", "ar"],
+      "domains": ["game_dev"],
+      "detect": { "concepts": ["openxr", "virtual reality", "augmented reality"] }
+    },
+
+    "arduino": {
+      "label": "Arduino",
+      "aliases": [],
+      "domains": ["embedded_iot"],
+      "detect": { "extensions": [".ino"] }
+    },
+    "raspberry_pi": {
+      "label": "Raspberry Pi",
+      "aliases": ["rpi"],
+      "domains": ["embedded_iot"],
+      "detect": { "concepts": ["raspberry pi", "gpio"] }
+    },
+    "esp32": {
+      "label": "ESP32",
+      "aliases": ["espressif"],
+      "domains": ["embedded_iot"],
+      "detect": { "concepts": ["esp32", "esp-idf"] }
+    },
+    "stm32": {
+      "label": "STM32",
+      "aliases": ["stmicroelectronics"],
+      "domains": ["embedded_iot"],
+      "detect": { "files": ["*.ioc"] }
+    },
+    "platformio": {
+      "label": "PlatformIO",
+      "aliases": [],
+      "domains": ["embedded_iot"],
+      "detect": { "files": ["platformio.ini"] }
+    },
+    "freertos": {
+      "label": "FreeRTOS",
+      "aliases": [],
+      "domains": ["embedded_iot", "systems"],
+      "detect": { "concepts": ["FreeRTOS", "xTaskCreate"] }
+    },
+    "zephyr": {
+      "label": "Zephyr RTOS",
+      "aliases": ["zephyr"],
+      "domains": ["embedded_iot", "systems"],
+      "detect": { "files": ["west.yml"], "paths": ["zephyr"] }
+    },
+    "mqtt": {
+      "label": "MQTT",
+      "aliases": [],
+      "domains": ["embedded_iot", "backend"],
+      "detect": { "npm": ["mqtt"], "pip": ["paho-mqtt"] }
+    },
+    "lorawan": {
+      "label": "LoRaWAN",
+      "aliases": ["lora"],
+      "domains": ["embedded_iot"],
+      "detect": { "concepts": ["LoRaWAN", "LoRa"] }
+    },
+    "robotics": {
+      "label": "Robotics",
+      "aliases": [],
+      "domains": ["embedded_iot", "ai_ml"],
+      "detect": { "concepts": ["robot", "actuator", "kinematics"] }
+    },
+    "ros": {
+      "label": "Robot Operating System",
+      "aliases": ["ros", "ros2"],
+      "domains": ["embedded_iot"],
+      "detect": { "files": ["package.xml"], "concepts": ["rclcpp", "rospy"] }
+    },
+    "verilog": {
+      "label": "Verilog",
+      "aliases": ["systemverilog"],
+      "domains": ["embedded_iot", "systems"],
+      "detect": { "extensions": [".v", ".sv"] }
+    },
+    "vhdl": {
+      "label": "VHDL",
+      "aliases": [],
+      "domains": ["embedded_iot", "systems"],
+      "detect": { "extensions": [".vhd", ".vhdl"] }
+    },
+    "pcb_design": {
+      "label": "PCB Design",
+      "aliases": ["printed circuit board", "kicad"],
+      "domains": ["embedded_iot", "design_ui_ux"],
+      "detect": { "extensions": [".kicad_pcb", ".sch"] }
+    },
+    "sensor_systems": {
+      "label": "Sensor Systems",
+      "aliases": ["sensors"],
+      "domains": ["embedded_iot"],
+      "detect": { "concepts": ["sensor", "i2c", "spi"] }
+    },
+
+    "figma": {
+      "label": "Figma",
+      "aliases": ["figjam"],
+      "domains": ["design_ui_ux"],
+      "detect": { "links": ["figma.com"] }
+    },
+    "sketch": {
+      "label": "Sketch",
+      "aliases": ["sketch app"],
+      "domains": ["design_ui_ux"],
+      "detect": { "extensions": [".sketch"] }
+    },
+    "adobe_xd": {
+      "label": "Adobe XD",
+      "aliases": ["xd"],
+      "domains": ["design_ui_ux"],
+      "detect": { "extensions": [".xd"] }
+    },
+    "photoshop": {
+      "label": "Adobe Photoshop",
+      "aliases": ["photoshop", "psd"],
+      "domains": ["design_ui_ux"],
+      "detect": { "extensions": [".psd"] }
+    },
+    "illustrator": {
+      "label": "Adobe Illustrator",
+      "aliases": ["illustrator", "ai"],
+      "domains": ["design_ui_ux"],
+      "detect": { "extensions": [".ai"] }
+    },
+    "after_effects": {
+      "label": "Adobe After Effects",
+      "aliases": ["after effects", "ae"],
+      "domains": ["design_ui_ux"],
+      "detect": { "extensions": [".aep"] }
+    },
+    "design_systems": {
+      "label": "Design Systems",
+      "aliases": ["component library", "design tokens"],
+      "domains": ["design_ui_ux", "frontend"],
+      "detect": { "concepts": ["design tokens", "component library"] }
+    },
+    "prototyping": {
+      "label": "Prototyping",
+      "aliases": ["interactive prototype"],
+      "domains": ["design_ui_ux"],
+      "detect": { "concepts": ["prototype", "wireframe"] }
+    },
+    "accessibility": {
+      "label": "Accessibility",
+      "aliases": ["a11y", "wcag"],
+      "domains": ["design_ui_ux", "frontend"],
+      "detect": { "concepts": ["aria", "wcag", "screen reader"] }
+    },
+    "ux_research": {
+      "label": "UX Research",
+      "aliases": ["user research", "usability research"],
+      "domains": ["design_ui_ux"],
+      "detect": { "concepts": ["user interview", "usability test"] }
+    },
+    "interaction_design": {
+      "label": "Interaction Design",
+      "aliases": ["ixd"],
+      "domains": ["design_ui_ux"],
+      "detect": { "concepts": ["interaction", "user flow"] }
+    },
+    "motion_design": {
+      "label": "Motion Design",
+      "aliases": ["motion graphics", "animation"],
+      "domains": ["design_ui_ux"],
+      "detect": { "concepts": ["motion", "animation"] }
+    },
+    "product_design": {
+      "label": "Product Design",
+      "aliases": ["digital product design"],
+      "domains": ["design_ui_ux"],
+      "detect": { "concepts": ["product design", "information architecture"] }
+    },
+    "typography": {
+      "label": "Typography",
+      "aliases": ["type design"],
+      "domains": ["design_ui_ux"],
+      "detect": { "concepts": ["typography", "type scale"] }
+    }
+  }
+}

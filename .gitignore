@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.vite/
+.turbo/
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
+
+.talentradar/
+tmp/
+temp/
