@@ -1,3 +1,15 @@
+import type {
+  DecidedTeam,
+  PersonProfile,
+  ProfileSkill,
+  QuotaReport,
+  QuotaRule,
+  QuotaSwap,
+  RankingParams,
+  SelectionOverride,
+  Team,
+} from "@talentradar/shared";
+
 export interface PublicEvent {
   id: string;
   slug: string;
@@ -37,6 +49,7 @@ export interface CurrentUser {
 
 export interface OrganizerEventSummary {
   id: string;
+  kind: "event" | "quick";
   slug: string;
   name: string;
   visibility: "draft" | "published" | "closed";
@@ -50,11 +63,65 @@ export interface OrganizerEventDetails extends OrganizerEventSummary {
   description: string;
   mode: "in_person" | "online" | "hybrid";
   venue?: string;
+  links: Array<{ label: string; url: string }>;
   capacity: number;
   teamSize: { min: number; max: number };
   requirements: CreateEventInput["requirements"];
+  quotas: QuotaRule[];
+  collegeAliases: Record<string, string[]>;
   metrics: { registrations: number; teams: number; profilesReady: number };
   timeline?: CreateEventInput["timeline"];
+}
+
+export interface OrganizerEventOperations {
+  participants: Array<{
+    registrationId: string;
+    personId: string;
+    name: string;
+    github: string;
+    email?: string;
+    verified: boolean;
+    college?: string;
+    year?: string;
+    branch?: string;
+    status: ParticipantOverview["applications"][number]["status"];
+    lookingForTeam: boolean;
+    teamId?: string;
+    profileStatus: "pending" | "building" | "ready" | "failed";
+    profileVersion?: number;
+    topSkills: string[];
+    updatedAt: string;
+  }>;
+  teams: Array<{
+    id: string;
+    name: string;
+    status: "draft" | "submitted" | "locked";
+    captainId: string;
+    submittedAt?: string;
+    members: Array<{
+      id: string;
+      name: string;
+      github: string;
+      college?: string;
+      profileStatus: "pending" | "building" | "ready" | "failed";
+      topSkills: string[];
+    }>;
+  }>;
+}
+
+export interface EventConfigurationInput {
+  name: string;
+  tagline: string;
+  description: string;
+  links: Array<{ label: string; url: string }>;
+  mode: "in_person" | "online" | "hybrid";
+  venue?: string;
+  timeline: NonNullable<OrganizerEventDetails["timeline"]>;
+  teamSize: { min: number; max: number };
+  capacity: number;
+  requirements: CreateEventInput["requirements"];
+  quotas: QuotaRule[];
+  collegeAliases: Record<string, string[]>;
 }
 
 export interface CreateEventInput {
@@ -84,6 +151,8 @@ export interface CreateEventInput {
     weight: number;
     coverage: { mode: "any_member" } | { mode: "min_members"; minMembers: number };
   }>;
+  quotas: QuotaRule[];
+  collegeAliases: Record<string, string[]>;
 }
 
 export interface RepositoryChoice {
@@ -171,6 +240,119 @@ export interface ParticipantApplicationDetails {
   };
 }
 
+export interface ParticipantTeam {
+  id: string;
+  hackathonId: string;
+  name: string;
+  inviteCode: string;
+  captainId: string;
+  status: "draft" | "submitted" | "locked";
+  submittedAt?: string;
+  members: Array<{
+    id: string;
+    name: string;
+    github: string;
+    profileStatus: "pending" | "building" | "ready" | "failed";
+  }>;
+}
+
+export interface ParticipantTeamContext {
+  registration: {
+    id: string;
+    lookingForTeam: boolean;
+  };
+  event: {
+    id: string;
+    name: string;
+    teamSize: { min: number; max: number };
+    registrationClosesAt?: string;
+  };
+  team: ParticipantTeam | null;
+  personId: string;
+}
+
+export interface OrganizerShortlistTeam {
+  teamId: string;
+  name: string;
+  memberIds: string[];
+  members: Array<{
+    personId: string;
+    name: string;
+    email?: string;
+    github: string;
+    college?: string;
+    yearOfStudy?: string;
+    branch?: string;
+    profileStatus: "pending" | "building" | "ready" | "failed";
+    topSkills: string[];
+    flags: string[];
+  }>;
+}
+
+export interface OrganizerShortlistData {
+  event: {
+    id: string;
+    name: string;
+    capacity: number;
+    ranking: RankingParams;
+    quotas: QuotaRule[];
+  };
+  profiles: PersonProfile[];
+  teams: OrganizerShortlistTeam[];
+  rankingTeams: Team[];
+  unmappedColleges: string[];
+  runs: Array<{
+    id: string;
+    name: string;
+    published: boolean;
+    selectedSeats: number;
+    createdAt: string;
+  }>;
+}
+
+export interface OrganizerShortlistRun {
+  id: string;
+  hackathonId: string;
+  name: string;
+  params: RankingParams;
+  selection: {
+    capacity: number;
+    waitlistSize: number;
+    quotas: QuotaRule[];
+    selectedSeats: number;
+    cutoffScore: number | null;
+  };
+  results: DecidedTeam[];
+  swaps: QuotaSwap[];
+  quotaReports: QuotaReport[];
+  overrides: Array<SelectionOverride & { by: string; at: string }>;
+  published: boolean;
+  publishedAt?: string;
+  createdAt: string;
+}
+
+export interface QuickCsvInspection {
+  headers: string[];
+  rowCount: number;
+  suggestedMapping: Record<string, string>;
+  preview: Array<Record<string, string>>;
+}
+
+export interface QuickImportStatus {
+  id: string;
+  name: string;
+  status: "created" | "mapped" | "profiling" | "ready" | "failed";
+  headers: string[];
+  suggestedMapping: Record<string, string>;
+  rowCount: number;
+  hasCsv: boolean;
+  hasArchive: boolean;
+  mapping?: Record<string, string>;
+  progress: { total: number; ready: number; failed: number; pending: number };
+  failures: Array<{ personId: string; name: string; error: string }>;
+  recentEvents: Array<{ at: string; message: string }>;
+}
+
 export class ApiError extends Error {
   status: number;
 
@@ -251,6 +433,23 @@ export async function publishOrganizerEvent(eventId: string): Promise<OrganizerE
   return response.event;
 }
 
+export async function getOrganizerEventOperations(
+  eventId: string,
+): Promise<OrganizerEventOperations> {
+  return apiRequest(`/api/organizer/events/${eventId}/operations`);
+}
+
+export async function updateOrganizerEventConfiguration(
+  eventId: string,
+  input: EventConfigurationInput,
+): Promise<OrganizerEventDetails> {
+  const response = await apiRequest<{ event: OrganizerEventDetails }>(
+    `/api/organizer/events/${eventId}/configuration`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  );
+  return response.event;
+}
+
 export async function getParticipantOverview(): Promise<ParticipantOverview> {
   return apiRequest<ParticipantOverview>("/api/participant/overview");
 }
@@ -315,4 +514,170 @@ export async function getRuntimeConfig(): Promise<{
 }> {
   return apiRequest("/api/config");
 }
-import type { ProfileSkill } from "@talentradar/shared";
+
+export async function getParticipantTeam(): Promise<ParticipantTeamContext> {
+  return apiRequest("/api/participant/team");
+}
+
+export async function createParticipantTeam(
+  eventId: string,
+  name: string,
+): Promise<ParticipantTeam> {
+  const response = await apiRequest<{ team: ParticipantTeam }>("/api/participant/teams", {
+    method: "POST",
+    body: JSON.stringify({ eventId, name }),
+  });
+  return response.team;
+}
+
+export async function joinParticipantTeam(inviteCode: string): Promise<ParticipantTeam> {
+  const response = await apiRequest<{ team: ParticipantTeam }>("/api/participant/teams/join", {
+    method: "POST",
+    body: JSON.stringify({ inviteCode }),
+  });
+  return response.team;
+}
+
+export async function setParticipantLookingForTeam(lookingForTeam: boolean): Promise<boolean> {
+  const response = await apiRequest<{ lookingForTeam: boolean }>(
+    "/api/participant/team/looking-for-team",
+    {
+      method: "PATCH",
+      body: JSON.stringify({ lookingForTeam }),
+    },
+  );
+  return response.lookingForTeam;
+}
+
+export async function submitParticipantTeam(teamId: string): Promise<ParticipantTeam> {
+  const response = await apiRequest<{ team: ParticipantTeam }>(
+    `/api/participant/teams/${teamId}/submit`,
+    { method: "POST" },
+  );
+  return response.team;
+}
+
+export async function resetParticipantTeamInvite(teamId: string): Promise<ParticipantTeam> {
+  const response = await apiRequest<{ team: ParticipantTeam }>(
+    `/api/participant/teams/${teamId}/invite/reset`,
+    { method: "POST" },
+  );
+  return response.team;
+}
+
+export async function removeParticipantTeamMember(
+  teamId: string,
+  memberId: string,
+): Promise<ParticipantTeam> {
+  const response = await apiRequest<{ team: ParticipantTeam }>(
+    `/api/participant/teams/${teamId}/members/${memberId}`,
+    { method: "DELETE" },
+  );
+  return response.team;
+}
+
+export async function leaveParticipantTeam(teamId: string): Promise<void> {
+  await apiRequest<void>(`/api/participant/teams/${teamId}/leave`, { method: "POST" });
+}
+
+export async function getOrganizerShortlist(eventId: string): Promise<OrganizerShortlistData> {
+  return apiRequest(`/api/organizer/events/${eventId}/shortlist`);
+}
+
+export async function saveOrganizerShortlistRun(
+  eventId: string,
+  input: {
+    name: string;
+    params: RankingParams;
+    selection: {
+      capacity: number;
+      waitlistSize: number;
+      quotas: QuotaRule[];
+      overrides: SelectionOverride[];
+    };
+  },
+): Promise<OrganizerShortlistRun> {
+  const response = await apiRequest<{ run: OrganizerShortlistRun }>(
+    `/api/organizer/events/${eventId}/shortlist/runs`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return response.run;
+}
+
+export async function publishOrganizerShortlistRun(
+  eventId: string,
+  runId: string,
+): Promise<OrganizerShortlistRun> {
+  const response = await apiRequest<{ run: OrganizerShortlistRun }>(
+    `/api/organizer/events/${eventId}/shortlist/runs/${runId}/publish`,
+    { method: "POST" },
+  );
+  return response.run;
+}
+
+export async function getOrganizerShortlistRun(
+  eventId: string,
+  runId: string,
+): Promise<OrganizerShortlistRun> {
+  const response = await apiRequest<{ run: OrganizerShortlistRun }>(
+    `/api/organizer/events/${eventId}/shortlist/runs/${runId}`,
+  );
+  return response.run;
+}
+
+export async function createQuickImport(input: {
+  name: string;
+  teamSize: { min: number; max: number };
+  capacity: number;
+  requirements: CreateEventInput["requirements"];
+}): Promise<{ id: string; name: string }> {
+  const response = await apiRequest<{ quick: { id: string; name: string } }>(
+    "/api/organizer/quick",
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return response.quick;
+}
+
+export async function uploadQuickCsv(quickId: string, file: File): Promise<QuickCsvInspection> {
+  const response = await apiRequest<{ csv: QuickCsvInspection }>(
+    `/api/organizer/quick/${quickId}/csv`,
+    {
+      method: "PUT",
+      headers: { "content-type": "text/csv", "x-file-name": encodeURIComponent(file.name) },
+      body: file,
+    },
+  );
+  return response.csv;
+}
+
+export async function uploadQuickArchive(quickId: string, file: File): Promise<{ size: number }> {
+  const response = await apiRequest<{ archive: { size: number } }>(
+    `/api/organizer/quick/${quickId}/archive`,
+    {
+      method: "PUT",
+      headers: { "content-type": "application/zip", "x-file-name": encodeURIComponent(file.name) },
+      body: file,
+    },
+  );
+  return response.archive;
+}
+
+export async function startQuickImport(
+  quickId: string,
+  mapping: Record<string, string | undefined>,
+): Promise<{ id: string; rowsAccepted: number; rowsRejected: number; cvsMatched: number }> {
+  const response = await apiRequest<{
+    import: { id: string; rowsAccepted: number; rowsRejected: number; cvsMatched: number };
+  }>(`/api/organizer/quick/${quickId}/start`, {
+    method: "POST",
+    body: JSON.stringify({ mapping, consent: true }),
+  });
+  return response.import;
+}
+
+export async function getQuickImport(quickId: string): Promise<QuickImportStatus> {
+  const response = await apiRequest<{ quick: QuickImportStatus }>(
+    `/api/organizer/quick/${quickId}`,
+  );
+  return response.quick;
+}

@@ -126,11 +126,11 @@ async function githubRepositories(
         ? "Empty repository"
         : !repository.pushed_at
           ? "Repository has no push timestamp"
-        : repository.size > 51_200
-          ? "Repository exceeds 50 MB"
-          : profileReadme
-            ? "GitHub profile README"
-            : undefined;
+          : repository.size > 51_200
+            ? "Repository exceeds 50 MB"
+            : profileReadme
+              ? "GitHub profile README"
+              : undefined;
     return {
       fullName: repository.full_name,
       ...(repository.description ? { description: repository.description } : {}),
@@ -294,7 +294,9 @@ export function createParticipantApi(
           .limit(1)
           .next();
         if (!profile) {
-          response.status(404).json({ error: "profile_not_found", message: "No profile has been started" });
+          response
+            .status(404)
+            .json({ error: "profile_not_found", message: "No profile has been started" });
           return;
         }
         const jobs = await db
@@ -336,7 +338,9 @@ export function createParticipantApi(
         if (!account) return;
         const applicationId = request.params.applicationId;
         if (!applicationId || !ObjectId.isValid(applicationId)) {
-          response.status(404).json({ error: "application_not_found", message: "Application not found" });
+          response
+            .status(404)
+            .json({ error: "application_not_found", message: "Application not found" });
           return;
         }
         const person = await db
@@ -347,7 +351,9 @@ export function createParticipantApi(
           .collection<RegistrationDocument>(collections.registrations)
           .findOne({ _id: ObjectId.createFromHexString(applicationId), personId: person._id });
         if (!application) {
-          response.status(404).json({ error: "application_not_found", message: "Application not found" });
+          response
+            .status(404)
+            .json({ error: "application_not_found", message: "Application not found" });
           return;
         }
         const event = await db

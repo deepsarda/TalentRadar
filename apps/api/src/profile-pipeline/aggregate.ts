@@ -2,8 +2,8 @@ import { aggregateProfile, ProfileJudgmentSchema } from "@talentradar/shared";
 import type { Db } from "mongodb";
 import { ObjectId } from "mongodb";
 import { z } from "zod";
-import { collections } from "../database/mongo.js";
 import type { AssessmentDocument, ProfileDocument } from "../database/models.js";
+import { collections } from "../database/mongo.js";
 import type { JobContext } from "../jobs/worker.js";
 
 const AggregatePayloadSchema = z.object({
@@ -45,7 +45,10 @@ export function createAggregateProfileHandler(db: Db) {
         $unset: { error: "" },
       },
     );
-    await progress("profile.aggregate.completed", `Built ${aggregated.skills.length} evidence-backed skill profiles`);
+    await progress(
+      "profile.aggregate.completed",
+      `Built ${aggregated.skills.length} evidence-backed skill profiles`,
+    );
     return { profileId: payload.profileId, skills: aggregated.skills.length };
   };
 }

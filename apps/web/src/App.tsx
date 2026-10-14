@@ -1,30 +1,66 @@
+import { lazy } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { TerminalFrame } from "./layouts/TerminalFrame";
-import {
-  EventOverviewPage,
-  EventSectionPage,
-  EventWizardPage,
-  OrganizerDashboard,
-  QuickShortlistPage,
-  SavedRunPage,
-  ShortlistWorkspacePage,
-} from "./pages/OrganizerPages";
-import {
-  ParticipantDashboard,
-  ParticipantDataPage,
-  ParticipantOnboarding,
-  ParticipantProfilePage,
-  ParticipantStatusPage,
-  ParticipantTeamPage,
-} from "./pages/ParticipantPages";
-import {
-  LandingPage,
-  LoginPage,
-  NotFoundPage,
-  PrivacyPage,
-  PublicEventPage,
-  TermsPage,
-} from "./pages/PublicPages";
+
+const LandingPage = lazy(() =>
+  import("./pages/PublicPages").then((module) => ({ default: module.LandingPage })),
+);
+const PublicEventPage = lazy(() =>
+  import("./pages/PublicPages").then((module) => ({ default: module.PublicEventPage })),
+);
+const LoginPage = lazy(() =>
+  import("./pages/PublicPages").then((module) => ({ default: module.LoginPage })),
+);
+const PrivacyPage = lazy(() =>
+  import("./pages/PublicPages").then((module) => ({ default: module.PrivacyPage })),
+);
+const TermsPage = lazy(() =>
+  import("./pages/PublicPages").then((module) => ({ default: module.TermsPage })),
+);
+const NotFoundPage = lazy(() =>
+  import("./pages/PublicPages").then((module) => ({ default: module.NotFoundPage })),
+);
+
+const ParticipantDashboard = lazy(() =>
+  import("./pages/ParticipantPages").then((module) => ({ default: module.ParticipantDashboard })),
+);
+const ParticipantOnboarding = lazy(() =>
+  import("./pages/ParticipantPages").then((module) => ({ default: module.ParticipantOnboarding })),
+);
+const ParticipantProfilePage = lazy(() =>
+  import("./pages/ParticipantPages").then((module) => ({ default: module.ParticipantProfilePage })),
+);
+const ParticipantTeamPage = lazy(() =>
+  import("./pages/ParticipantPages").then((module) => ({ default: module.ParticipantTeamPage })),
+);
+const ParticipantStatusPage = lazy(() =>
+  import("./pages/ParticipantPages").then((module) => ({ default: module.ParticipantStatusPage })),
+);
+const ParticipantDataPage = lazy(() =>
+  import("./pages/ParticipantPages").then((module) => ({ default: module.ParticipantDataPage })),
+);
+
+const OrganizerDashboard = lazy(() =>
+  import("./pages/OrganizerPages").then((module) => ({ default: module.OrganizerDashboard })),
+);
+const EventWizardPage = lazy(() =>
+  import("./pages/OrganizerPages").then((module) => ({ default: module.EventWizardPage })),
+);
+const EventOverviewPage = lazy(() =>
+  import("./pages/OrganizerPages").then((module) => ({ default: module.EventOverviewPage })),
+);
+const EventSectionPage = lazy(() =>
+  import("./pages/OrganizerPages").then((module) => ({ default: module.EventSectionPage })),
+);
+const ShortlistWorkspacePage = lazy(() =>
+  import("./pages/OrganizerPages").then((module) => ({ default: module.ShortlistWorkspacePage })),
+);
+const SavedRunPage = lazy(() =>
+  import("./pages/OrganizerPages").then((module) => ({ default: module.SavedRunPage })),
+);
+const QuickShortlistPage = lazy(() =>
+  import("./pages/OrganizerPages").then((module) => ({ default: module.QuickShortlistPage })),
+);
 
 export function App() {
   return (

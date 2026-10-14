@@ -29,7 +29,8 @@ export function runCommand(
       clearTimeout(timeout);
       options.signal?.removeEventListener("abort", abort);
       if (error) reject(error);
-      else resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr).toString("utf8") });
+      else
+        resolve({ stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr).toString("utf8") });
     };
     const abort = () => {
       child.kill("SIGTERM");

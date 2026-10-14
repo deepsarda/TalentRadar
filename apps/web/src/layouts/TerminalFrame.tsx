@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { getCurrentUser, logout } from "../lib/api";
 
@@ -209,7 +209,9 @@ export function TerminalFrame() {
       </nav>
 
       <main className="terminal-workspace" id="main-content">
-        <Outlet />
+        <Suspense fallback={<div className="loading-state">Loading workspace…</div>}>
+          <Outlet />
+        </Suspense>
       </main>
 
       <footer className="terminal-statusline">

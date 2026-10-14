@@ -6,8 +6,8 @@ import type { Db } from "mongodb";
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 import { decryptSecret } from "../auth/crypto.js";
-import { collections } from "../database/mongo.js";
 import type { PersonDocument, UserDocument } from "../database/models.js";
+import { collections } from "../database/mongo.js";
 import type { JobContext } from "../jobs/worker.js";
 import { runCommand } from "./commands.js";
 
@@ -15,6 +15,7 @@ const FetchRepositoryPayloadSchema = z.object({
   profileId: z.string().length(24),
   personId: z.string().length(24),
   repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+  accessUserId: z.string().length(24).optional(),
   pushedAt: z.iso.datetime({ offset: true }).optional(),
   fork: z.boolean().default(false),
 });
@@ -75,17 +76,18 @@ const excludedSegments = new Set([
 
 async function githubJson(
   url: string,
-  token: string,
+  token: string | undefined,
   fetchImplementation: typeof fetch,
 ): Promise<unknown> {
   const response = await fetchImplementation(url, {
     headers: {
       accept: "application/vnd.github+json",
-      authorization: `Bearer ${token}`,
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       "x-github-api-version": "2026-03-10",
     },
   });
-  if (!response.ok) throw new Error(`GitHub returned ${response.status} for ${new URL(url).pathname}`);
+  if (!response.ok)
+    throw new Error(`GitHub returned ${response.status} for ${new URL(url).pathname}`);
   return response.json();
 }
 
@@ -100,7 +102,11 @@ function safePath(filePath: string): boolean {
   );
 }
 
-async function readSafeFile(root: string, relativePath: string, maxBytes: number): Promise<string | null> {
+async function readSafeFile(
+  root: string,
+  relativePath: string,
+  maxBytes: number,
+): Promise<string | null> {
   const absolutePath = path.resolve(root, relativePath);
   const canonicalRoot = await realpath(root);
   const canonicalPath = await realpath(absolutePath);
@@ -144,12 +150,16 @@ export function createFetchRepositoryHandler(options: RepositoryHandlerOptions) 
     const person = await options.db
       .collection<PersonDocument>(collections.people)
       .findOne({ _id: ObjectId.createFromHexString(payload.personId) });
-    if (!person?.userId) throw new Error("Repository job requires a verified GitHub person");
-    const user = await options.db
-      .collection<UserDocument>(collections.users)
-      .findOne({ _id: person.userId });
-    if (!user) throw new Error("GitHub account no longer exists");
-    const token = decryptSecret(user.encryptedAccessToken, options.sessionSecret);
+    if (!person) throw new Error("Repository job person no longer exists");
+    const accessUserId =
+      person.userId ??
+      (payload.accessUserId ? ObjectId.createFromHexString(payload.accessUserId) : undefined);
+    const accessUser = accessUserId
+      ? await options.db.collection<UserDocument>(collections.users).findOne({ _id: accessUserId })
+      : null;
+    const token = accessUser
+      ? decryptSecret(accessUser.encryptedAccessToken, options.sessionSecret)
+      : undefined;
     const encodedRepository = payload.repository.split("/").map(encodeURIComponent).join("/");
 
     await progress("repo.metadata.started", `Reading GitHub facts for ${payload.repository}`);
@@ -167,14 +177,25 @@ export function createFetchRepositoryHandler(options: RepositoryHandlerOptions) 
     ]);
     const languages = GithubLanguagesSchema.parse(languagePayload);
     const contributors = GithubContributorsSchema.parse(contributorPayload);
-    const totalContributions = contributors.reduce((sum, contributor) => sum + contributor.contributions, 0);
+    const totalContributions = contributors.reduce(
+      (sum, contributor) => sum + contributor.contributions,
+      0,
+    );
     const ownContributions =
-      contributors.find((contributor) => contributor.login.toLowerCase() === user.login.toLowerCase())
-        ?.contributions ?? 0;
+      contributors.find(
+        (contributor) => contributor.login.toLowerCase() === person.github.toLowerCase(),
+      )?.contributions ?? 0;
     const authorship = totalContributions > 0 ? ownContributions / totalContributions : 0;
     if (payload.fork && ownContributions === 0) {
-      await progress("repo.skipped", `${payload.repository} is a fork with no commits by ${user.login}`);
-      return { repository: payload.repository, included: false, exclusionReason: "fork_without_authorship" };
+      await progress(
+        "repo.skipped",
+        `${payload.repository} is a fork with no commits by ${person.github}`,
+      );
+      return {
+        repository: payload.repository,
+        included: false,
+        exclusionReason: "fork_without_authorship",
+      };
     }
 
     const temporaryRoot = await mkdtemp(path.join(tmpdir(), "talentradar-repo-"));
@@ -211,7 +232,10 @@ export function createFetchRepositoryHandler(options: RepositoryHandlerOptions) 
         .toString("utf8")
         .split("\0")
         .filter((file) => file && safePath(file));
-      await progress("repo.clone.completed", `Cloned ${payload.repository} at ${commitSha.slice(0, 12)}`);
+      await progress(
+        "repo.clone.completed",
+        `Cloned ${payload.repository} at ${commitSha.slice(0, 12)}`,
+      );
 
       const manifests: Record<string, string> = {};
       for (const file of files) {
@@ -221,7 +245,10 @@ export function createFetchRepositoryHandler(options: RepositoryHandlerOptions) 
       }
       const readmePath = files.find((file) => /^readme(?:\.[^/]+)?$/i.test(file));
       const readme = readmePath
-        ? (await readSafeFile(checkout, readmePath, 256 * 1024))?.split(/\r?\n/).slice(0, 300).join("\n")
+        ? (await readSafeFile(checkout, readmePath, 256 * 1024))
+            ?.split(/\r?\n/)
+            .slice(0, 300)
+            .join("\n")
         : undefined;
       const sourceCandidates = files
         .filter((file) => sourceExtensions.has(path.extname(file).toLowerCase()))
@@ -246,7 +273,9 @@ export function createFetchRepositoryHandler(options: RepositoryHandlerOptions) 
       });
       const hasTests = files.some((file) => /(^|\/)(__tests__|tests?|spec)(\/|\.)/i.test(file));
       const hasCi = files.some((file) => file.startsWith(".github/workflows/"));
-      const containerized = files.some((file) => /(^|\/)(dockerfile|docker-compose\.ya?ml)$/i.test(file));
+      const containerized = files.some((file) =>
+        /(^|\/)(dockerfile|docker-compose\.ya?ml)$/i.test(file),
+      );
       await progress(
         "repo.extract.completed",
         `${payload.repository}: ${technologyMatches.length} technology hints, tests ${hasTests ? "found" : "not found"}, CI ${hasCi ? "found" : "not found"}`,

@@ -12,6 +12,9 @@ import { createRenderCvHandler } from "./profile-pipeline/cv.js";
 import { createJudgePersonHandler } from "./profile-pipeline/judge.js";
 import { createProfileOrchestrator } from "./profile-pipeline/orchestrator.js";
 import { createFetchRepositoryHandler } from "./profile-pipeline/repository.js";
+import { createImportRowHandler } from "./quick/import-row.js";
+import { createQuickApi } from "./quick/quick-api.js";
+import { createShortlistApi } from "./shortlist/shortlist-api.js";
 import { createTeamApi } from "./teams/team-api.js";
 
 const environment = readEnvironment();
@@ -33,7 +36,14 @@ async function main(): Promise<void> {
     database && authentication
       ? createParticipantApi(database.db, authentication, environment)
       : undefined;
-  const teamApi = database && authentication ? createTeamApi(database.db, authentication) : undefined;
+  const teamApi =
+    database && authentication ? createTeamApi(database.db, authentication) : undefined;
+  const shortlistApi =
+    database && authentication ? createShortlistApi(database.db, authentication) : undefined;
+  const quickApi =
+    database && authentication
+      ? createQuickApi(database.db, authentication, environment)
+      : undefined;
   const orchestrator = database ? createProfileOrchestrator(database.db) : undefined;
   const worker =
     database && environment.RUN_WORKER_IN_API && environment.SESSION_SECRET
@@ -48,6 +58,7 @@ async function main(): Promise<void> {
             render_cv: createRenderCvHandler(database.db),
             judge_person: createJudgePersonHandler(database.db, environment),
             aggregate_profile: createAggregateProfileHandler(database.db),
+            import_row: createImportRowHandler(database.db, environment.SESSION_SECRET),
           },
           {
             ...(orchestrator
@@ -63,9 +74,9 @@ async function main(): Promise<void> {
     staticDirectory,
     ...(authentication ? { authentication } : {}),
     ...(publicEvents ? { publicEvents } : {}),
-    ...(organizerEvents || participantApi || teamApi
+    ...(organizerEvents || participantApi || teamApi || shortlistApi || quickApi
       ? {
-          apiModules: [organizerEvents, participantApi, teamApi].filter(
+          apiModules: [organizerEvents, participantApi, teamApi, shortlistApi, quickApi].filter(
             (module) => module !== undefined,
           ),
         }

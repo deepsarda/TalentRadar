@@ -68,6 +68,7 @@ export const workedExampleParams = {
   ],
   alpha: 0.7,
   noveltyWeight: 10,
+  confidenceFactors: { high: 1, medium: 0.85, low: 0.6 },
   minFit: 0,
   minTeamSize: 1,
   maxTeamSize: 4,

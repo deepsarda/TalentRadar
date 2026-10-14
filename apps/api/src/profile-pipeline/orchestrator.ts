@@ -1,14 +1,22 @@
 import type { Db } from "mongodb";
 import { ObjectId } from "mongodb";
 import { z } from "zod";
-import { collections } from "../database/mongo.js";
 import type { JobDocument, ProfileDocument } from "../database/models.js";
-import { enqueueJob, type ClaimedJob } from "../jobs/queue.js";
+import { collections } from "../database/mongo.js";
+import { type ClaimedJob, enqueueJob } from "../jobs/queue.js";
 
 const ProfilePayloadSchema = z.object({
   profileId: z.string().length(24),
   personId: z.string().length(24),
 });
+
+function stringProperty(
+  record: Readonly<Record<string, unknown>> | undefined,
+  property: string,
+): string | undefined {
+  const value = record?.[property];
+  return typeof value === "string" ? value : undefined;
+}
 
 export function createProfileOrchestrator(db: Db) {
   return {
@@ -30,7 +38,7 @@ export function createProfileOrchestrator(db: Db) {
         const renderJobs = inputJobs.filter((inputJob) => inputJob.type === "render_cv");
         if (
           fetchJobs.length !== profile.repos.length ||
-          renderJobs.length !== 1 ||
+          renderJobs.length > 1 ||
           inputJobs.some((inputJob) => inputJob.status !== "done")
         ) {
           return;
@@ -40,8 +48,10 @@ export function createProfileOrchestrator(db: Db) {
           type: "judge_person",
         });
         if (existingJudge) return;
-        const fileId = renderJobs[0]?.payload["fileId"];
-        if (typeof fileId !== "string") throw new Error("Rendered CV job has no file id");
+        const fileId = stringProperty(renderJobs[0]?.payload, "fileId");
+        if (renderJobs.length === 1 && !fileId) {
+          throw new Error("Rendered CV job has no file id");
+        }
         await db
           .collection<ProfileDocument>(collections.profiles)
           .updateOne(
@@ -51,15 +61,15 @@ export function createProfileOrchestrator(db: Db) {
         await enqueueJob(
           db,
           "judge_person",
-          { profileId, personId, fileId },
+          { profileId, personId, ...(fileId ? { fileId } : {}) },
           { maxAttempts: 3 },
         );
         return;
       }
 
       if (job.type === "judge_person") {
-        const assessmentId = result?.["assessmentId"];
-        if (typeof assessmentId !== "string") throw new Error("Judge job produced no assessment id");
+        const assessmentId = stringProperty(result, "assessmentId");
+        if (!assessmentId) throw new Error("Judge job produced no assessment id");
         const existingAggregate = await db.collection<JobDocument>(collections.jobs).findOne({
           "payload.profileId": profileId,
           type: "aggregate_profile",

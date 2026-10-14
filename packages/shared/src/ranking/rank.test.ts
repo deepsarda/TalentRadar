@@ -81,4 +81,27 @@ describe("rank", () => {
     expect(beta?.rank).toBeNull();
     expect(beta?.ineligibleReasons).toContain("Team fit is below 90%");
   });
+
+  it("reranks cached raw levels with the run confidence factors", () => {
+    const profiles = workedExampleProfiles.map((profile) =>
+      profile.personId === "arjun"
+        ? {
+            ...profile,
+            skills: profile.skills.map((skill) => ({ ...skill, confidence: "low" as const })),
+          }
+        : profile,
+    );
+    const strict = rank(profiles, workedExampleTeams, {
+      ...workedExampleParams,
+      confidenceFactors: { high: 1, medium: 0.85, low: 0.4 },
+    });
+    const lenient = rank(profiles, workedExampleTeams, {
+      ...workedExampleParams,
+      confidenceFactors: { high: 1, medium: 0.85, low: 1 },
+    });
+
+    expect(strict.find((team) => team.teamId === "beta")?.score).toBeLessThan(
+      lenient.find((team) => team.teamId === "beta")?.score ?? 0,
+    );
+  });
 });

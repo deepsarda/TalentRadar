@@ -59,6 +59,13 @@ export const RankingParamsSchema = z
     requirements: z.array(RequirementSchema).min(1),
     alpha: z.number().min(0).max(1).default(0.7),
     noveltyWeight: z.number().min(0).max(25).default(10),
+    confidenceFactors: z
+      .object({
+        high: z.number().min(0).max(1).default(1),
+        medium: z.number().min(0).max(1).default(0.85),
+        low: z.number().min(0).max(1).default(0.6),
+      })
+      .default({ high: 1, medium: 0.85, low: 0.6 }),
     minFit: z.number().min(0).max(1).default(0),
     minTeamSize: z.number().int().min(1).max(6).default(1),
     maxTeamSize: z.number().int().min(1).max(6).default(6),
@@ -70,6 +77,28 @@ export const RankingParamsSchema = z
   .refine((params) => params.requirements.some((requirement) => requirement.weight > 0), {
     message: "At least one requirement must have a positive weight",
     path: ["requirements"],
+  });
+
+export const QuotaRuleSchema = z
+  .object({
+    attribute: z.enum(["college", "year_of_study", "branch", "city"]),
+    op: z.enum(["equals", "not_equals", "in", "not_in"]),
+    value: z.union([z.string().trim().min(1), z.array(z.string().trim().min(1)).min(1)]),
+    minShare: z.number().min(0.01).max(1),
+    unit: z.enum(["teams", "participants"]).default("teams"),
+    match: z.enum(["any", "majority", "all"]).default("all"),
+  })
+  .superRefine((quota, context) => {
+    const expectsList = quota.op === "in" || quota.op === "not_in";
+    if (expectsList !== Array.isArray(quota.value)) {
+      context.addIssue({
+        code: "custom",
+        message: expectsList
+          ? "This operator needs a list of values"
+          : "This operator needs one value",
+        path: ["value"],
+      });
+    }
   });
 
 export const HackathonTimelineSchema = z
@@ -115,4 +144,5 @@ export type Team = z.infer<typeof TeamSchema>;
 export type Coverage = z.infer<typeof CoverageSchema>;
 export type Requirement = z.infer<typeof RequirementSchema>;
 export type RankingParams = z.infer<typeof RankingParamsSchema>;
+export type QuotaRule = z.infer<typeof QuotaRuleSchema>;
 export type Hackathon = z.infer<typeof HackathonSchema>;

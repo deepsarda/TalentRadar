@@ -16,6 +16,8 @@ describe("taxonomy", () => {
       },
     });
     const ids = new Set(matches.map((match) => match.id));
-    expect(ids).toEqual(expect.objectContaining(new Set(["typescript", "react", "express", "docker"])));
+    expect(ids).toEqual(
+      expect.objectContaining(new Set(["typescript", "react", "express", "docker"])),
+    );
   });
 });

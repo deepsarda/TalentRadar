@@ -8,7 +8,9 @@ const TaxonomyIdSchema = z.string().refine((value) => taxonomyIds.includes(value
 
 export const RepositorySkillJudgmentSchema = z.object({
   id: TaxonomyIdSchema,
-  evidence: z.array(z.object({ path: z.string().min(1).max(1024), note: z.string().min(1).max(500) })).min(1),
+  evidence: z
+    .array(z.object({ path: z.string().min(1).max(1024), note: z.string().min(1).max(500) }))
+    .min(1),
   thought: z.string().max(600),
   level: z.number().int().min(1).max(5),
 });
@@ -63,7 +65,11 @@ function recencyFactor(pushedAt: string, now: Date): number {
 
 function repoWeight(repository: RepositoryJudgment, now: Date): number {
   const authorship = Math.min(1, Math.max(0.2, repository.authorship));
-  return authorship * recencyFactor(repository.pushedAt, now) * (originalityFactors[repository.originality] ?? 0);
+  return (
+    authorship *
+    recencyFactor(repository.pushedAt, now) *
+    (originalityFactors[repository.originality] ?? 0)
+  );
 }
 
 function round(value: number): number {
@@ -92,7 +98,8 @@ export function aggregateProfile(
       })
       .sort(
         (left, right) =>
-          right.weightedLevel - left.weightedLevel || left.repository.repo.localeCompare(right.repository.repo),
+          right.weightedLevel - left.weightedLevel ||
+          left.repository.repo.localeCompare(right.repository.repo),
       )
       .slice(0, 3);
     const claim = judgment.cv.claims.find((candidate) => candidate.id === skillId);
@@ -123,7 +130,9 @@ export function aggregateProfile(
       effective: round(level * confidenceFactors[confidence]),
       evidence,
       thought:
-        contributions.map((contribution) => contribution.skill.thought).join(" ") || claim?.thought || "",
+        contributions.map((contribution) => contribution.skill.thought).join(" ") ||
+        claim?.thought ||
+        "",
     };
   });
 
@@ -140,7 +149,9 @@ export function aggregateProfile(
   return {
     personId,
     displayName,
-    skills: skills.sort((left, right) => right.effective - left.effective || left.id.localeCompare(right.id)),
+    skills: skills.sort(
+      (left, right) => right.effective - left.effective || left.id.localeCompare(right.id),
+    ),
     novelty,
     flags: judgment.flags,
   };

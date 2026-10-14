@@ -1,4 +1,14 @@
-import type { PersonProfile, RankingParams, Requirement, Team } from "@talentradar/shared";
+import type {
+  DecidedTeam,
+  PersonProfile,
+  QuotaReport,
+  QuotaRule,
+  QuotaSwap,
+  RankingParams,
+  Requirement,
+  SelectionOverride,
+  Team,
+} from "@talentradar/shared";
 import type { ObjectId } from "mongodb";
 
 export type AccountRole = "participant" | "organizer";
@@ -14,6 +24,7 @@ export interface UserDocument {
   college?: string;
   year?: string;
   branch?: string;
+  city?: string;
   encryptedAccessToken: string;
   createdAt: Date;
   updatedAt: Date;
@@ -92,7 +103,7 @@ export interface HackathonDocument {
   capacity: number;
   requirements: Requirement[];
   ranking: RankingParams;
-  quotas: unknown[];
+  quotas: QuotaRule[];
   collegeAliases: Record<string, string[]>;
   visibility: "draft" | "published" | "closed";
   createdAt: Date;
@@ -104,6 +115,7 @@ export interface TeamDocument extends Omit<Team, "teamId" | "memberIds" | "submi
   _id: ObjectId;
   hackathonId: ObjectId;
   inviteCode: string;
+  importKey?: string;
   captainId: ObjectId;
   memberIds: ObjectId[];
   status: "draft" | "submitted" | "locked";
@@ -120,7 +132,7 @@ export interface RegistrationDocument {
   lookingForTeam: boolean;
   consentAt: Date;
   selectedRepositories: string[];
-  cvFileId: ObjectId;
+  cvFileId?: ObjectId;
   status:
     | "draft"
     | "submitted"
@@ -134,19 +146,38 @@ export interface RegistrationDocument {
   updatedAt: Date;
 }
 
+export interface QuickImportDocument {
+  _id: ObjectId;
+  hackathonId: ObjectId;
+  organizerId: ObjectId;
+  csvFileId?: ObjectId;
+  zipFileId?: ObjectId;
+  headers: string[];
+  rowCount: number;
+  mapping?: Record<string, string>;
+  status: "created" | "mapped" | "profiling" | "ready" | "failed";
+  consentAt?: Date;
+  error?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface ShortlistRunDocument {
   _id: ObjectId;
   hackathonId: ObjectId;
   name: string;
   params: RankingParams;
-  results: unknown[];
-  overrides: Array<{
-    teamId: ObjectId;
-    action: "pin_in" | "pin_out";
-    reason: string;
-    by: ObjectId;
-    at: Date;
-  }>;
+  selection: {
+    capacity: number;
+    waitlistSize: number;
+    quotas: QuotaRule[];
+    selectedSeats: number;
+    cutoffScore: number | null;
+  };
+  results: DecidedTeam[];
+  swaps: QuotaSwap[];
+  quotaReports: QuotaReport[];
+  overrides: Array<SelectionOverride & { by: ObjectId; at: Date }>;
   published: boolean;
   publishedAt?: Date;
   createdBy: ObjectId;

@@ -6,6 +6,7 @@ import type {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
+import { cloneElement, isValidElement, useId } from "react";
 import { Link, type LinkProps } from "react-router-dom";
 
 export function Panel({
@@ -93,15 +94,37 @@ export function Field({
   error?: string;
   className?: string;
 }>) {
+  const generatedId = useId();
+  const control = isValidElement<{ id?: string; "aria-describedby"?: string }>(children)
+    ? children
+    : null;
+  const controlId = control?.props.id ?? generatedId;
+  const descriptionId = `${controlId}-description`;
+  const labelledControl = control
+    ? cloneElement(control, {
+        id: controlId,
+        ...((error || hint) && !control.props["aria-describedby"]
+          ? { "aria-describedby": descriptionId }
+          : {}),
+      })
+    : children;
   return (
-    <fieldset className={`terminal-field ${className}`}>
-      <legend className="field-label">
+    <div className={`terminal-field ${className}`}>
+      <label className="field-label" htmlFor={controlId}>
         <span aria-hidden="true">›</span> {label}
-      </legend>
-      {children}
-      {error ? <span className="field-error">{error}</span> : null}
-      {!error && hint ? <span className="field-hint">{hint}</span> : null}
-    </fieldset>
+      </label>
+      {labelledControl}
+      {error ? (
+        <span className="field-error" id={descriptionId}>
+          {error}
+        </span>
+      ) : null}
+      {!error && hint ? (
+        <span className="field-hint" id={descriptionId}>
+          {hint}
+        </span>
+      ) : null}
+    </div>
   );
 }
 

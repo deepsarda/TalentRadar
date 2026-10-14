@@ -6,6 +6,7 @@ import type {
   OAuthStateDocument,
   PersonDocument,
   ProfileDocument,
+  QuickImportDocument,
   RegistrationDocument,
   SessionDocument,
   ShortlistRunDocument,
@@ -25,6 +26,7 @@ export const collections = {
   jobs: "jobs",
   sessions: "sessions",
   oauthStates: "oauth_states",
+  quickImports: "quick_imports",
 } as const;
 
 export interface TalentRadarDatabase {
@@ -79,6 +81,12 @@ export async function ensureIndexes(db: Db): Promise<void> {
     db.collection<TeamDocument>(collections.teams).createIndexes([
       { key: { inviteCode: 1 }, name: "team_invite_unique", unique: true },
       { key: { hackathonId: 1, memberIds: 1 }, name: "one_team_per_event_member", unique: true },
+      {
+        key: { hackathonId: 1, importKey: 1 },
+        name: "quick_import_team_unique",
+        unique: true,
+        partialFilterExpression: { importKey: { $exists: true } },
+      },
     ]),
     db
       .collection<RegistrationDocument>(collections.registrations)
@@ -89,6 +97,10 @@ export async function ensureIndexes(db: Db): Promise<void> {
     db
       .collection<ShortlistRunDocument>(collections.shortlistRuns)
       .createIndex({ hackathonId: 1, createdAt: -1 }, { name: "event_runs" }),
+    db.collection<QuickImportDocument>(collections.quickImports).createIndexes([
+      { key: { hackathonId: 1 }, name: "quick_import_event_unique", unique: true },
+      { key: { organizerId: 1, updatedAt: -1 }, name: "quick_import_organizer" },
+    ]),
     db.collection<JobDocument>(collections.jobs).createIndexes([
       { key: { status: 1, runAt: 1 }, name: "job_claim" },
       { key: { status: 1, lockedUntil: 1 }, name: "job_lease_recovery" },

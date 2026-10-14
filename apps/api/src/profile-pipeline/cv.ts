@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Db } from "mongodb";
@@ -47,7 +47,11 @@ export async function renderCvPages(
     const pages = (await readdir(temporaryRoot))
       .filter((file) => /^page-\d+\.png$/.test(file))
       .sort((left, right) => left.localeCompare(right));
-    return Promise.all(pages.map(async (page) => (await readFile(path.join(temporaryRoot, page))).toString("base64")));
+    return Promise.all(
+      pages.map(async (page) =>
+        (await readFile(path.join(temporaryRoot, page))).toString("base64"),
+      ),
+    );
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
@@ -58,7 +62,10 @@ export function createRenderCvHandler(db: Db) {
   return async ({ job, progress, signal }: JobContext): Promise<Record<string, unknown>> => {
     const payload = RenderCvPayloadSchema.parse(job.payload);
     const fileId = ObjectId.createFromHexString(payload.fileId);
-    await progress("cv.download.started", "Reading the submitted CV from encrypted application storage");
+    await progress(
+      "cv.download.started",
+      "Reading the submitted CV from encrypted application storage",
+    );
     const pdf = await download(bucket, fileId);
     if (pdf.length === 0 || pdf.subarray(0, 5).toString("ascii") !== "%PDF-") {
       throw new Error("Stored CV is not a valid PDF");
@@ -72,7 +79,10 @@ export function createRenderCvHandler(db: Db) {
     const pageLimit = Math.min(pageCount, 3);
     for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
       const page = await document.getPage(pageNumber);
-      const [annotations, textContent] = await Promise.all([page.getAnnotations(), page.getTextContent()]);
+      const [annotations, textContent] = await Promise.all([
+        page.getAnnotations(),
+        page.getTextContent(),
+      ]);
       for (const annotation of annotations) {
         if ("url" in annotation && typeof annotation.url === "string") links.add(annotation.url);
       }
@@ -87,15 +97,22 @@ export function createRenderCvHandler(db: Db) {
       const inputPath = path.join(temporaryRoot, "input.pdf");
       const outputPrefix = path.join(temporaryRoot, "page");
       await writeFile(inputPath, pdf, { flag: "wx", mode: 0o600 });
-      await progress("cv.render.started", `Rendering ${pageLimit} CV page${pageLimit === 1 ? "" : "s"} at 150 DPI`);
+      await progress(
+        "cv.render.started",
+        `Rendering ${pageLimit} CV page${pageLimit === 1 ? "" : "s"} at 150 DPI`,
+      );
       await runCommand(
         "pdftoppm",
         ["-f", "1", "-l", String(pageLimit), "-r", "150", "-png", inputPath, outputPrefix],
         { timeoutMs: 60_000, signal },
       );
-      const renderedPages = (await readdir(temporaryRoot)).filter((file) => /^page-\d+\.png$/.test(file));
+      const renderedPages = (await readdir(temporaryRoot)).filter((file) =>
+        /^page-\d+\.png$/.test(file),
+      );
       if (renderedPages.length !== pageLimit) {
-        throw new Error(`Expected ${pageLimit} rendered CV pages, received ${renderedPages.length}`);
+        throw new Error(
+          `Expected ${pageLimit} rendered CV pages, received ${renderedPages.length}`,
+        );
       }
       const possiblePromptInjection = injectionPattern.test(hiddenText.join(" "));
       await progress(
@@ -103,7 +120,10 @@ export function createRenderCvHandler(db: Db) {
         `Rendered ${renderedPages.length} pages and extracted ${links.size} link${links.size === 1 ? "" : "s"}`,
       );
       if (possiblePromptInjection) {
-        await progress("cv.prompt_injection.flagged", "The hidden CV text layer contains instruction-like text");
+        await progress(
+          "cv.prompt_injection.flagged",
+          "The hidden CV text layer contains instruction-like text",
+        );
       }
       return {
         fileId: payload.fileId,

@@ -32,17 +32,27 @@ interface MemberLevel {
   level: number;
 }
 
-function levelFor(profile: PersonProfile | undefined, skillId: string): number {
-  return profile?.skills.find((skill) => skill.id === skillId)?.effective ?? 0;
+function levelFor(
+  profile: PersonProfile | undefined,
+  skillId: string,
+  params: RankingParams,
+): number {
+  const skill = profile?.skills.find((candidate) => candidate.id === skillId);
+  if (!skill) return 0;
+  return skill.level * params.confidenceFactors[skill.confidence];
 }
 
 function requirementLevel(
   requirement: Requirement,
   team: Team,
   profiles: ReadonlyMap<string, PersonProfile>,
+  params: RankingParams,
 ): MemberLevel | null {
   const levels = team.memberIds
-    .map((memberId) => ({ memberId, level: levelFor(profiles.get(memberId), requirement.skill) }))
+    .map((memberId) => ({
+      memberId,
+      level: levelFor(profiles.get(memberId), requirement.skill, params),
+    }))
     .sort((left, right) => right.level - left.level || left.memberId.localeCompare(right.memberId));
 
   if (requirement.coverage.mode === "any_member") {
@@ -60,7 +70,7 @@ function scoreTeam(
   const totalWeight = params.requirements.reduce((sum, requirement) => sum + requirement.weight, 0);
 
   const breakdown = params.requirements.map((requirement): RequirementBreakdown => {
-    const memberLevel = requirementLevel(requirement, team, profiles);
+    const memberLevel = requirementLevel(requirement, team, profiles, params);
     const teamLevel = memberLevel?.level ?? 0;
     const coverage = Math.min(teamLevel / requirement.target, 1);
     const fitContribution = (requirement.weight * coverage) / totalWeight;

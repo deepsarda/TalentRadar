@@ -20,7 +20,10 @@ export interface TaxonomyIssue {
 }
 
 function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/[_.\s]+/g, "-");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_.\s]+/g, "-");
 }
 
 function parseJson(content: string | undefined): Record<string, unknown> | null {
@@ -55,18 +58,24 @@ function pythonPackages(files: Record<string, string>): Set<string> {
       .split(/\r?\n/)
       .map((line) => line.replace(/#.*/, "").trim())
       .filter(Boolean)
-      .map((line) => normalize(line.split(/[<>=!~\s\[]/, 1)[0] ?? "")),
+      .map((line) => normalize(line.split(/[<>=!~\s[]/, 1)[0] ?? "")),
   );
 }
 
 function quotedManifestNames(content: string | undefined): Set<string> {
   if (!content) return new Set();
   return new Set(
-    [...content.matchAll(/["']([^"']+)["']\s*(?:=|,|\))/g)].map((match) => normalize(match[1] ?? "")),
+    [...content.matchAll(/["']([^"']+)["']\s*(?:=|,|\))/g)].map((match) =>
+      normalize(match[1] ?? ""),
+    ),
   );
 }
 
-function jsonSectionNames(files: Record<string, string>, fileName: string, sections: string[]): Set<string> {
+function jsonSectionNames(
+  files: Record<string, string>,
+  fileName: string,
+  sections: string[],
+): Set<string> {
   const manifest = parseJson(files[fileName]);
   return new Set(sections.flatMap((section) => objectKeys(manifest?.[section]).map(normalize)));
 }
@@ -76,7 +85,10 @@ export function detectTechnologies(
   selectedTaxonomy: Taxonomy = taxonomy,
 ): TechnologyMatch[] {
   const normalizedFiles = Object.fromEntries(
-    Object.entries(input.files).map(([path, content]) => [path.replace(/^\.\//, "").toLowerCase(), content]),
+    Object.entries(input.files).map(([path, content]) => [
+      path.replace(/^\.\//, "").toLowerCase(),
+      content,
+    ]),
   );
   const paths = Object.keys(normalizedFiles);
   const basenames = new Set(paths.map((path) => path.split("/").at(-1) ?? path));
@@ -117,12 +129,27 @@ export function detectTechnologies(
           paths.some((path) => path.includes(value.toLowerCase().replaceAll("*", "")))
         ) {
           reasons.push(`path:${value}`);
-        } else if (["maven", "gradle", "commands", "imports", "links", "api", "concepts", "sdk", "runtime"].includes(detector) && corpus.includes(value.toLowerCase())) {
+        } else if (
+          [
+            "maven",
+            "gradle",
+            "commands",
+            "imports",
+            "links",
+            "api",
+            "concepts",
+            "sdk",
+            "runtime",
+          ].includes(detector) &&
+          corpus.includes(value.toLowerCase())
+        ) {
           reasons.push(`${detector}:${value}`);
         }
       }
     }
-    return reasons.length > 0 ? [{ id, label: technology.label, domains: technology.domains, reasons }] : [];
+    return reasons.length > 0
+      ? [{ id, label: technology.label, domains: technology.domains, reasons }]
+      : [];
   });
 }
 

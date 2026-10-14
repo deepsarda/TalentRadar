@@ -17,9 +17,21 @@ beforeEach(() => {
   window.sessionStorage.setItem("talentradar.booted", "1");
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ events: [] }),
+    vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const path = typeof input === "string" ? input : input.toString();
+      if (path === "/api/me") {
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          json: () =>
+            Promise.resolve({ error: "authentication_required", message: "Sign in required" }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ events: [] }),
+      });
     }),
   );
 });
@@ -29,28 +41,42 @@ describe("TalentRadar application shell", () => {
     renderApp();
 
     expect(
-      screen.getByRole("heading", { name: /shortlist teams by the work/i }),
+      await screen.findByRole("heading", { name: /shortlist teams by the work/i }),
     ).toBeInTheDocument();
     expect(await screen.findByText(/no events are published yet/i)).toBeInTheDocument();
     expect(screen.queryByText(/fixture/i)).not.toBeInTheDocument();
   });
 
-  it("provides a separate organizer console and complete event wizard", () => {
+  it("provides a separate organizer console and validates the event wizard", async () => {
     window.history.pushState({}, "", "/organizer/events/new");
     renderApp();
 
     expect(
-      screen.getByRole("heading", { name: /create a hackathon workspace/i }),
+      await screen.findByRole("heading", { name: /create a hackathon workspace/i }),
     ).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: /event name/i }), {
+      target: { value: "Build Night" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: /tagline/i }), {
+      target: { value: "Build a useful product" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: /description/i }), {
+      target: { value: "A focused overnight hackathon." },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: /venue/i }), {
+      target: { value: "Innovation Centre" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     expect(screen.getByText(/teams lock at this time/i)).toBeInTheDocument();
   });
 
-  it("provides a separate participant portal", () => {
+  it("provides a separate participant portal", async () => {
     window.history.pushState({}, "", "/participant");
     renderApp();
 
-    expect(screen.getByRole("heading", { name: /your applications/i })).toBeInTheDocument();
-    expect(screen.getByText(/no applications yet/i)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: /your applications/i }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText(/sign in to see your applications/i)).toBeInTheDocument();
   });
 });
