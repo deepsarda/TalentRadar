@@ -14,9 +14,13 @@ const EnvironmentSchema = z
     GEMINI_API_KEY: z.string().min(1).optional(),
     GEMINI_MODEL: z.string().min(1).default("gemini-3.1-flash-lite"),
     MODEL_DATA_POLICY: z.enum(["synthetic_only", "paid_private"]).default("synthetic_only"),
-    PROMPT_VERSION: z.string().min(1).default("v1"),
-    SAMPLER_VERSION: z.string().min(1).default("v1"),
     REPO_TOKEN_BUDGET: z.coerce.number().int().min(4000).max(20000).default(12000),
+    // Free-tier defaults; your project's real limits are shown in AI Studio.
+    GEMINI_REQUESTS_PER_MINUTE: z.coerce.number().int().min(1).default(15),
+    GEMINI_TOKENS_PER_MINUTE: z.coerce.number().int().min(1000).default(250_000),
+    GITHUB_REQUESTS_PER_HOUR: z.coerce.number().int().min(1).default(5000),
+    RESEND_API_KEY: z.string().min(1).optional(),
+    EMAIL_FROM: z.string().min(3).default("TalentRadar <onboarding@resend.dev>"),
     RUN_WORKER_IN_API: z
       .enum(["true", "false"])
       .default("false")

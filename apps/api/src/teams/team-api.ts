@@ -1,4 +1,10 @@
 import { randomInt } from "node:crypto";
+import {
+  type PersonProfile,
+  type RankingParams,
+  type Requirement,
+  rank,
+} from "@talentradar/shared";
 import type { Express, Request, Response } from "express";
 import type { ClientSession, Db } from "mongodb";
 import { MongoServerError, ObjectId } from "mongodb";
@@ -19,7 +25,9 @@ const TeamNameSchema = z.object({
   name: z.string().trim().min(2).max(80),
 });
 const JoinTeamSchema = z.object({ inviteCode: z.string().trim().min(8).max(12) });
-const LookingForTeamSchema = z.object({ lookingForTeam: z.boolean() });
+const EventIdSchema = z.string().refine((value) => ObjectId.isValid(value) && value.length === 24);
+const TeamQuerySchema = z.object({ eventId: EventIdSchema });
+const LookingForTeamSchema = z.object({ eventId: EventIdSchema, lookingForTeam: z.boolean() });
 const inviteAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
 class TeamConflictError extends Error {}
@@ -28,7 +36,7 @@ function inviteCode(): string {
   return Array.from({ length: 8 }, () => inviteAlphabet[randomInt(inviteAlphabet.length)]).join("");
 }
 
-async function currentPerson(
+export async function currentPerson(
   authentication: Authentication,
   db: Db,
   request: Request,
@@ -100,18 +108,165 @@ async function teamResponse(db: Db, team: TeamDocument) {
   };
 }
 
+export interface FitMember {
+  id: string;
+  name: string;
+  skills: PersonProfile["skills"];
+}
+
+export interface FitRow {
+  skill: string;
+  target: number;
+  level: number;
+  best: { id: string; name: string } | null;
+  covered: boolean;
+}
+
+/**
+ * Levels per published requirement, computed by the real ranking function so the card can never
+ * disagree with the shortlist. Weights are flattened to 1: they do not change levels, and the
+ * organizer's weights are not public. Nothing score- or rank-shaped is returned.
+ */
+function rankFitTeams(
+  requirements: readonly Requirement[],
+  confidenceFactors: RankingParams["confidenceFactors"],
+  teams: ReadonlyArray<{ teamId: string; members: readonly FitMember[] }>,
+) {
+  const profiles = new Map<string, PersonProfile>();
+  for (const member of teams.flatMap((team) => team.members)) {
+    profiles.set(member.id, {
+      personId: member.id,
+      displayName: member.name || "member",
+      skills: member.skills,
+      novelty: 0,
+      flags: [],
+    });
+  }
+  const ranked = rank(
+    [...profiles.values()],
+    teams.map((team) => ({
+      teamId: team.teamId,
+      name: team.teamId,
+      memberIds: team.members.map((member) => member.id),
+      submittedAt: new Date(0).toISOString(),
+    })),
+    {
+      requirements: requirements.map((requirement) => ({ ...requirement, weight: 1 })),
+      alpha: 1,
+      noveltyWeight: 0,
+      confidenceFactors,
+      minFit: 0,
+      minTeamSize: 1,
+      maxTeamSize: 6,
+    },
+  );
+  return new Map(ranked.map((team) => [team.teamId, team.breakdown]));
+}
+
+export function teamFit(
+  requirements: readonly Requirement[],
+  confidenceFactors: RankingParams["confidenceFactors"],
+  members: readonly FitMember[],
+): FitRow[] {
+  if (requirements.length === 0 || members.length === 0) return [];
+  const names = new Map(members.map((member) => [member.id, member.name]));
+  const breakdown = rankFitTeams(requirements, confidenceFactors, [{ teamId: "team", members }]);
+  return (breakdown.get("team") ?? []).map((row) => ({
+    skill: row.skill,
+    target: row.target,
+    level: Math.round(row.teamLevel * 10) / 10,
+    best: row.bestMemberId
+      ? { id: row.bestMemberId, name: names.get(row.bestMemberId) ?? "member" }
+      : null,
+    covered: row.coverage >= 1,
+  }));
+}
+
+/**
+ * Orders looking-for-team candidates by how much requirement coverage they would add to the team
+ * (each requirement counts up to its target, so strength on an already-covered skill adds nothing).
+ * Candidates who add nothing are dropped.
+ */
+export function rankTeammates(
+  requirements: readonly Requirement[],
+  confidenceFactors: RankingParams["confidenceFactors"],
+  team: readonly FitMember[],
+  candidates: readonly FitMember[],
+): Array<{ id: string; gain: number; fills: string[] }> {
+  if (requirements.length === 0 || candidates.length === 0 || team.length >= 6) return [];
+  const breakdowns = rankFitTeams(requirements, confidenceFactors, [
+    { teamId: "base", members: team },
+    ...candidates.map((candidate) => ({
+      teamId: `with:${candidate.id}`,
+      members: [...team, candidate],
+    })),
+  ]);
+  const base = new Map((breakdowns.get("base") ?? []).map((row) => [row.skill, row.coverage]));
+  return candidates
+    .flatMap((candidate) => {
+      const rows = breakdowns.get(`with:${candidate.id}`) ?? [];
+      const fills = rows
+        .filter((row) => row.coverage > (base.get(row.skill) ?? 0) + 1e-9)
+        .map((row) => row.skill);
+      const gain = rows.reduce(
+        (sum, row) => sum + Math.max(0, row.coverage - (base.get(row.skill) ?? 0)),
+        0,
+      );
+      return gain > 1e-9 ? [{ id: candidate.id, name: candidate.name, gain, fills }] : [];
+    })
+    .sort((left, right) => right.gain - left.gain || left.name.localeCompare(right.name))
+    .map(({ id, gain, fills }) => ({ id, gain: Math.round(gain * 100) / 100, fills }));
+}
+
+/** Latest ready profile per person; people still building contribute no skills yet. */
+async function readySkills(db: Db, personIds: ObjectId[]) {
+  const profiles = personIds.length
+    ? await db
+        .collection<ProfileDocument>(collections.profiles)
+        .find({ personId: { $in: personIds }, status: "ready" })
+        .sort({ personId: 1, version: -1 })
+        .toArray()
+    : [];
+  const skillsByPerson = new Map<string, PersonProfile["skills"]>();
+  for (const profile of profiles) {
+    const id = profile.personId.toHexString();
+    if (!skillsByPerson.has(id)) skillsByPerson.set(id, profile.skills);
+  }
+  return skillsByPerson;
+}
+
+async function fitMembers(db: Db, people: PersonDocument[]): Promise<FitMember[]> {
+  const skills = await readySkills(
+    db,
+    people.map((person) => person._id),
+  );
+  return people.map((person) => ({
+    id: person._id.toHexString(),
+    name: person.name,
+    skills: skills.get(person._id.toHexString()) ?? [],
+  }));
+}
+
 export function createTeamApi(db: Db, authentication: Authentication): ApiModule {
   return {
     register(app: Express) {
       app.get("/api/participant/team", async (request, response) => {
         const person = await currentPerson(authentication, db, request, response);
         if (!person) return;
+        // A person has one team per hackathon, so the caller must say which hackathon.
+        const eventId = TeamQuerySchema.safeParse(request.query);
+        if (!eventId.success) {
+          response
+            .status(422)
+            .json({ error: "validation_failed", message: "Choose which event's team to load" });
+          return;
+        }
         const registration = await db
           .collection<RegistrationDocument>(collections.registrations)
-          .find({ personId: person._id })
-          .sort({ updatedAt: -1 })
-          .limit(1)
-          .next();
+          .findOne({
+            personId: person._id,
+            hackathonId: ObjectId.createFromHexString(eventId.data.eventId),
+          });
         if (!registration) {
           response.status(404).json({
             error: "application_required",
@@ -141,6 +296,120 @@ export function createTeamApi(db: Db, authentication: Authentication): ApiModule
           },
           team: team ? await teamResponse(db, team) : null,
           personId: person._id.toHexString(),
+        });
+      });
+
+      app.get("/api/participant/teams/:teamId/fit", async (request, response) => {
+        const person = await currentPerson(authentication, db, request, response);
+        if (!person) return;
+        const teamId = request.params.teamId;
+        const team =
+          teamId && ObjectId.isValid(teamId)
+            ? await db
+                .collection<TeamDocument>(collections.teams)
+                .findOne({ _id: ObjectId.createFromHexString(teamId), memberIds: person._id })
+            : null;
+        const event = team
+          ? await db
+              .collection<HackathonDocument>(collections.hackathons)
+              .findOne({ _id: team.hackathonId })
+          : null;
+        if (!team || !event) {
+          response.status(404).json({ error: "team_not_found", message: "Team not found" });
+          return;
+        }
+        const people = await db
+          .collection<PersonDocument>(collections.people)
+          .find({ _id: { $in: team.memberIds } })
+          .toArray();
+        response.json({
+          fit: teamFit(
+            event.requirements,
+            event.ranking.confidenceFactors,
+            await fitMembers(db, people),
+          ),
+        });
+      });
+
+      app.get("/api/participant/teammates", async (request, response) => {
+        const person = await currentPerson(authentication, db, request, response);
+        if (!person) return;
+        const query = TeamQuerySchema.safeParse(request.query);
+        if (!query.success) {
+          response
+            .status(422)
+            .json({ error: "validation_failed", message: "Choose which event to search" });
+          return;
+        }
+        const hackathonId = ObjectId.createFromHexString(query.data.eventId);
+        const registrations = db.collection<RegistrationDocument>(collections.registrations);
+        // Only applicants of this event may see its pool.
+        const registration = await registrations.findOne({ hackathonId, personId: person._id });
+        if (!registration) {
+          response.status(404).json({
+            error: "application_required",
+            message: "Apply to this event to see people looking for a team",
+          });
+          return;
+        }
+        const event = await openEvent(db, hackathonId);
+        const team = registration.teamId
+          ? await db
+              .collection<TeamDocument>(collections.teams)
+              .findOne({ _id: registration.teamId })
+          : null;
+        if (
+          !event ||
+          (team && (team.status !== "draft" || team.memberIds.length >= event.teamSize.max))
+        ) {
+          response.json({ suggestions: [] });
+          return;
+        }
+        // Opted in, still teamless, not the caller. 500 is far above any real pool for one event.
+        const pool = await registrations
+          .find({
+            hackathonId,
+            lookingForTeam: true,
+            teamId: { $exists: false },
+            personId: { $ne: person._id },
+          })
+          .limit(500)
+          .toArray();
+        const people = db.collection<PersonDocument>(collections.people);
+        const [teamPeople, candidatePeople] = await Promise.all([
+          team
+            ? people.find({ _id: { $in: team.memberIds } }).toArray()
+            : Promise.resolve([person]),
+          pool.length
+            ? people.find({ _id: { $in: pool.map((entry) => entry.personId) } }).toArray()
+            : Promise.resolve([]),
+        ]);
+        const candidates = await fitMembers(db, candidatePeople);
+        const candidatesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+        const collegeById = new Map(
+          candidatePeople.map((candidate) => [candidate._id.toHexString(), candidate.college]),
+        );
+        const ranked = rankTeammates(
+          event.requirements,
+          event.ranking.confidenceFactors,
+          await fitMembers(db, teamPeople),
+          candidates,
+        ).slice(0, 10);
+        response.json({
+          suggestions: ranked.map((suggestion) => {
+            const candidate = candidatesById.get(suggestion.id);
+            const college = collegeById.get(suggestion.id);
+            return {
+              id: suggestion.id,
+              name: candidate?.name ?? "Participant",
+              ...(college ? { college } : {}),
+              topSkills: [...(candidate?.skills ?? [])]
+                .sort((left, right) => right.effective - left.effective)
+                .slice(0, 3)
+                .map((skill) => ({ id: skill.id, level: skill.effective })),
+              fills: suggestion.fills,
+            };
+          }),
         });
       });
 
@@ -311,9 +580,13 @@ export function createTeamApi(db: Db, authentication: Authentication): ApiModule
         const updated = await db
           .collection<RegistrationDocument>(collections.registrations)
           .findOneAndUpdate(
-            { personId: person._id, teamId: { $exists: false } },
+            {
+              personId: person._id,
+              hackathonId: ObjectId.createFromHexString(parsed.data.eventId),
+              teamId: { $exists: false },
+            },
             { $set: { lookingForTeam: parsed.data.lookingForTeam, updatedAt: new Date() } },
-            { sort: { updatedAt: -1 }, returnDocument: "after" },
+            { returnDocument: "after" },
           );
         if (!updated) {
           response.status(409).json({

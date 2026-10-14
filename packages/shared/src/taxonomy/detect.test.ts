@@ -20,4 +20,22 @@ describe("taxonomy", () => {
       expect.objectContaining(new Set(["typescript", "react", "express", "docker"])),
     );
   });
+
+  it("reads manifests in subfolders, as monorepos keep them", () => {
+    const matches = detectTechnologies({
+      files: {
+        "client/package.json": JSON.stringify({ dependencies: { react: "19.0.0" } }),
+        "server/requirements.txt": "fastapi==0.115\n",
+        "server/old-package.json.bak": JSON.stringify({ dependencies: { vue: "3" } }),
+      },
+    });
+    expect(matches.map((match) => match.id).sort()).toEqual(["fastapi", "nodejs", "react"]);
+  });
+
+  it("treats *.ext file rules as suffix patterns", () => {
+    const ids = detectTechnologies({ files: { "api/Api.csproj": "<Project />" } }).map(
+      (match) => match.id,
+    );
+    expect(ids).toContain("dotnet");
+  });
 });

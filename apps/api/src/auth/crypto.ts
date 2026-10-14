@@ -31,7 +31,9 @@ export function encryptSecret(value: string, secret: string): string {
   ].join(".");
 }
 
-export function decryptSecret(value: string, secret: string): string {
+/** `value` is undefined once the participant revokes GitHub access; they must sign in again. */
+export function decryptSecret(value: string | undefined, secret: string): string {
+  if (value === undefined) throw new Error("GitHub access was revoked; sign in again");
   const [version, nonceValue, tagValue, ciphertextValue] = value.split(".");
   if (version !== "v1" || !nonceValue || !tagValue || !ciphertextValue) {
     throw new Error("Unsupported encrypted value");

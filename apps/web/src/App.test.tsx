@@ -43,8 +43,10 @@ describe("TalentRadar application shell", () => {
     expect(
       await screen.findByRole("heading", { name: /shortlist teams by the work/i }),
     ).toBeInTheDocument();
-    expect(await screen.findByText(/no events are published yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/0 live events/i)).toBeInTheDocument();
     expect(screen.queryByText(/fixture/i)).not.toBeInTheDocument();
+    // Fixture people and teams live in tests only; none may render in the shipped page.
+    expect(document.body.textContent).not.toMatch(/Team (Alpha|Beta)|Riya|Kabir|Arjun|Meera/);
   });
 
   it("provides a separate organizer console and validates the event wizard", async () => {
@@ -75,7 +77,7 @@ describe("TalentRadar application shell", () => {
     renderApp();
 
     expect(
-      await screen.findByRole("heading", { level: 1, name: /your applications/i }),
+      await screen.findByRole("heading", { level: 1, name: /^\$? ?hi$/i }),
     ).toBeInTheDocument();
     expect(await screen.findByText(/sign in to see your applications/i)).toBeInTheDocument();
   });

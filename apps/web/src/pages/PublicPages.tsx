@@ -1,356 +1,278 @@
-import { taxonomy } from "@talentradar/shared";
 import { useQuery } from "@tanstack/react-query";
+import { type CSSProperties, useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { ActionLink, Badge, EmptyState, ErrorState, LoadingState, Panel } from "../components/ui";
-import { getPublicEvent, getPublicEvents } from "../lib/api";
+import {
+  ActionAnchor,
+  ActionLink,
+  Bar,
+  countdown,
+  EmptyState,
+  ErrorState,
+  formatDate,
+  LoadingState,
+  Notice,
+  Pane,
+  SkillGroups,
+  StateTag,
+  TermTabs,
+} from "../components/ui";
+import { getCurrentUser, getPublicEvent, getPublicEvents, type PublicEvent } from "../lib/api";
+import { skillLabel } from "../lib/skills";
 
-const pipeline = [
-  {
-    index: "01",
-    title: "Choose the evidence",
-    body: "Participants choose up to six public repositories and provide a PDF CV with explicit consent.",
-    mode: "PARTICIPANT CONTROL",
-  },
-  {
-    index: "02",
-    title: "Extract what code can prove",
-    body: "Languages, manifests, authorship, tests, CI and file structure come from deterministic checks.",
-    mode: "PLAIN CODE",
-  },
-  {
-    index: "03",
-    title: "Judge only what needs judgment",
-    body: "A structured model assessment evaluates quality and originality, then every citation is verified.",
-    mode: "ONE CACHED CALL",
-  },
-  {
-    index: "04",
-    title: "Rank against stated needs",
-    body: "Teams are scored against organizer requirements with a deterministic function and readable breakdown.",
-    mode: "PURE TYPESCRIPT",
-  },
+const banner = `████████╗ █████╗ ██╗     ███████╗███╗   ██╗████████╗██████╗  █████╗ ██████╗  █████╗ ██████╗ 
+╚══██╔══╝██╔══██╗██║     ██╔════╝████╗  ██║╚══██╔══╝██╔══██╗██╔══██╗██╔══██╗██╔══██╗██╔══██╗
+   ██║   ███████║██║     █████╗  ██╔██╗ ██║   ██║   ██████╔╝███████║██║  ██║███████║██████╔╝
+   ██║   ██╔══██║██║     ██╔══╝  ██║╚██╗██║   ██║   ██╔══██╗██╔══██║██║  ██║██╔══██║██╔══██╗
+   ██║   ██║  ██║███████╗███████╗██║ ╚████║   ██║   ██║  ██║██║  ██║██████╔╝██║  ██║██║  ██║
+   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝`;
+
+const bannerNarrow = `████████╗ █████╗ ██╗     ███████╗███╗   ██╗████████╗
+╚══██╔══╝██╔══██╗██║     ██╔════╝████╗  ██║╚══██╔══╝
+   ██║   ███████║██║     █████╗  ██╔██╗ ██║   ██║   
+   ██║   ██╔══██║██║     ██╔══╝  ██║╚██╗██║   ██║   
+   ██║   ██║  ██║███████╗███████╗██║ ╚████║   ██║   
+   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═══╝   ╚═╝   
+██████╗  █████╗ ██████╗  █████╗ ██████╗ 
+██╔══██╗██╔══██╗██╔══██╗██╔══██╗██╔══██╗
+██████╔╝███████║██║  ██║███████║██████╔╝
+██╔══██╗██╔══██║██║  ██║██╔══██║██╔══██╗
+██║  ██║██║  ██║██████╔╝██║  ██║██║  ██║
+╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝`;
+
+const eventTabs = [
+  { id: "live", label: "live", status: "open" },
+  { id: "upcoming", label: "upcoming", status: "upcoming" },
+  { id: "completed", label: "completed", status: "closed" },
 ] as const;
+
+type EventTab = (typeof eventTabs)[number]["id"];
+
+function EventSessions({ events, user }: { events: PublicEvent[]; user: string }) {
+  const counts = Object.fromEntries(
+    eventTabs.map((tab) => [tab.id, events.filter((event) => event.status === tab.status).length]),
+  ) as Record<EventTab, number>;
+  const [tab, setTab] = useState<EventTab>(() =>
+    counts.live > 0 ? "live" : counts.upcoming > 0 ? "upcoming" : "live",
+  );
+  const status = eventTabs.find((candidate) => candidate.id === tab)?.status;
+  const shown = events.filter((event) => event.status === status);
+
+  return (
+    <TermTabs
+      label="Hackathons"
+      tabs={eventTabs.map(({ id, label }) => ({ id, label, count: counts[id] }))}
+      active={tab}
+      onChange={setTab}
+      user={user}
+      command={`talentradar events ls --${tab}`}
+    >
+      {shown.length === 0 ? (
+        <p className="dim px-4">
+          0 {tab} events.
+          {tab === "live" ? " Check upcoming, or create one from the organizer console." : ""}
+        </p>
+      ) : (
+        <div className="tui-list">
+          {shown.map((event) => (
+            <Link to={`/h/${event.slug}`} key={event.id}>
+              <span className="marker" aria-hidden="true">
+                ›
+              </span>
+              <span className="grid min-w-0 gap-0.5">
+                <span className="font-bold">{event.name}</span>
+                <span className="dim truncate">{event.tagline}</span>
+                <span className="dim text-sm">
+                  {[
+                    tab === "upcoming"
+                      ? `opens ${formatDate(event.registrationOpensAt)}`
+                      : tab === "live"
+                        ? `closes ${formatDate(event.registrationClosesAt)}`
+                        : formatDate(event.eventStartsAt),
+                    `${event.capacity} seats`,
+                    event.mode.replace("_", " "),
+                  ].join(" · ")}
+                </span>
+              </span>
+              <span className="dim hidden sm:inline" aria-hidden="true">
+                {event.slug}/
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
+      <p className="dim mt-2 px-4">
+        {shown.length} {shown.length === 1 ? "entry" : "entries"}. Enter opens the event page.
+      </p>
+    </TermTabs>
+  );
+}
 
 export function LandingPage() {
   const events = useQuery({ queryKey: ["public-events"], queryFn: getPublicEvents });
+  const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
+  const user = account.data?.login ?? "guest";
 
   return (
-    <div className="public-page">
-      <section className="public-hero">
-        <div className="hero-copy">
-          <p className="terminal-kicker">PUBLIC REPOSITORY + CV EVALUATION</p>
-          <h1>
-            Shortlist teams by the work
-            <span>they can actually show.</span>
-          </h1>
-          <p className="hero-summary">
-            TalentRadar builds inspectable skill profiles from repositories participants choose and
-            ranks teams against requirements the organizer defines. Every score leads back to the
-            evidence behind it.
-          </p>
-          <div className="hero-actions">
-            <ActionLink to="/#events">View published events</ActionLink>
-            <ActionLink to="/organizer" tone="secondary">
-              Open organizer console
-            </ActionLink>
-          </div>
-          <div className="hero-privacy">
-            <span aria-hidden="true">◈</span>
-            <p>
-              Participants select their inputs and can inspect or challenge every profile claim.
-              Public repositories only.
-            </p>
-          </div>
+    <div className="mx-auto grid max-w-6xl gap-14 py-4">
+      <section className="grid gap-10">
+        <div aria-hidden="true">
+          <pre className="banner glow hidden sm:block">{banner}</pre>
+          <pre className="banner narrow glow sm:hidden">{bannerNarrow}</pre>
         </div>
-
-        <section className="hero-terminal" aria-label="TalentRadar evidence flow">
-          <div className="hero-terminal-bar">
-            <span>PROFILE_BUILD / INPUT CONTRACT</span>
-            <Badge tone="success">TRACEABLE</Badge>
-          </div>
-          <div className="evidence-command">
-            <span aria-hidden="true">›</span>
-            <span>evidence sources</span>
-          </div>
-          <dl className="source-list">
-            <div>
-              <dt>Repositories</dt>
-              <dd>Up to 6, selected by the participant</dd>
+        <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+          <div className="grid gap-6">
+            <h1 className="font-display text-[44px] leading-[0.95] text-accent sm:text-[60px]">
+              Shortlist teams by the work they can show.
+            </h1>
+            <p className="dim text-lg">Skill profiles from real code. Rankings you can explain.</p>
+            <div className="flex flex-wrap gap-3">
+              <ActionLink to="/organizer" tone="primary">
+                Organizer console
+              </ActionLink>
+              <ActionLink to="/participant">Participant portal</ActionLink>
             </div>
-            <div>
-              <dt>CV</dt>
-              <dd>PDF, up to 2 MB, consent required</dd>
-            </div>
-            <div>
-              <dt>Code facts</dt>
-              <dd>Manifests, tests, CI, authorship, files</dd>
-            </div>
-          </dl>
-          <div className="terminal-divider" />
-          <div className="evidence-command">
-            <span aria-hidden="true">›</span>
-            <span>output contract</span>
           </div>
-          <ul className="output-list">
-            <li>
-              <span>01</span> Skill level + confidence
-            </li>
-            <li>
-              <span>02</span> File citations at a fixed commit
-            </li>
-            <li>
-              <span>03</span> Team score breakdown
-            </li>
-            <li>
-              <span>04</span> Logged organizer decisions
-            </li>
-          </ul>
-        </section>
-      </section>
-
-      <section className="method-section" id="method">
-        <header className="section-heading">
-          <p>HOW THE SYSTEM WORKS</p>
-          <h2>Code handles facts. Judgment stays bounded. Decisions remain inspectable.</h2>
-        </header>
-        <div className="pipeline-grid">
-          {pipeline.map((step) => (
-            <article className="pipeline-step" key={step.index}>
-              <span className="step-number">{step.index}</span>
-              <span className="step-mode">{step.mode}</span>
-              <h3>{step.title}</h3>
-              <p>{step.body}</p>
-            </article>
-          ))}
+          <section id="events">
+            {events.isPending ? <LoadingState label="talentradar events ls" /> : null}
+            {events.isError ? (
+              <ErrorState message={events.error.message} retry={() => void events.refetch()} />
+            ) : null}
+            {events.data ? <EventSessions events={events.data} user={user} /> : null}
+          </section>
         </div>
-      </section>
-
-      <section className="portal-section">
-        <article className="portal-path participant-path">
-          <div className="portal-path-heading">
-            <span>PARTICIPANT://</span>
-            <Badge tone="info">YOUR EVIDENCE</Badge>
-          </div>
-          <h2>Apply with work you choose.</h2>
-          <p>
-            Connect GitHub, choose repositories, provide consent, inspect your profile, and manage
-            your team from one guided workspace.
-          </p>
-          <ul>
-            <li>Only public repositories you select</li>
-            <li>Levels and confidence kept separate</li>
-            <li>Evidence and correction controls on every skill</li>
-            <li>Your rank and other teams stay private</li>
-          </ul>
-          <ActionLink to="/participant" tone="secondary">
-            Enter participant portal
-          </ActionLink>
-        </article>
-
-        <article className="portal-path organizer-path">
-          <div className="portal-path-heading">
-            <span>ORGANIZER://</span>
-            <Badge tone="success">YOUR REQUIREMENTS</Badge>
-          </div>
-          <h2>Review decisions, not black-box scores.</h2>
-          <p>
-            Create an event or import an existing registration sheet, tune explicit requirements,
-            and inspect why each team landed where it did.
-          </p>
-          <ul>
-            <li>One engine for full events and quick imports</li>
-            <li>Instant local re-ranking with zero model calls</li>
-            <li>Evidence, breakdown, and decision explanations</li>
-            <li>Reasoned overrides and immutable published runs</li>
-          </ul>
-          <ActionLink to="/organizer">Enter organizer console</ActionLink>
-        </article>
-      </section>
-
-      <section className="why-section">
-        <header className="section-heading">
-          <p>THREE LEVELS OF WHY</p>
-          <h2>No number appears without a route back to its source.</h2>
-        </header>
-        <div className="why-chain">
-          <article>
-            <span>01 / EVIDENCE</span>
-            <h3>Why this skill level?</h3>
-            <p>
-              Repository, fixed commit, file path, confidence, per-repository score and reasoning.
-            </p>
-          </article>
-          <i aria-hidden="true">→</i>
-          <article>
-            <span>02 / BREAKDOWN</span>
-            <h3>Why this team score?</h3>
-            <p>Target, best member, coverage, points contributed or lost, and novelty source.</p>
-          </article>
-          <i aria-hidden="true">→</i>
-          <article>
-            <span>03 / DECISION</span>
-            <h3>Why this outcome?</h3>
-            <p>
-              Cutoff gap, capacity, quota changes, and every organizer override with its reason.
-            </p>
-          </article>
-        </div>
-      </section>
-
-      <section className="events-section" id="events">
-        <header className="section-heading section-heading-row">
-          <div>
-            <p>PUBLISHED EVENTS</p>
-            <h2>Apply through a live event page.</h2>
-          </div>
-          <Link to="/organizer/events/new">Organizing an event? Create it here →</Link>
-        </header>
-        {events.isPending ? <LoadingState label="Reading published events" /> : null}
-        {events.isError ? (
-          <ErrorState message={events.error.message} retry={() => void events.refetch()} />
-        ) : null}
-        {events.data?.length === 0 ? (
-          <EmptyState title="No events are published yet">
-            Published hackathons will appear here with their real dates, requirements, and
-            registration status.
-          </EmptyState>
-        ) : null}
-        {events.data && events.data.length > 0 ? (
-          <div className="event-list">
-            {events.data.map((event) => (
-              <Link className="event-row" key={event.id} to={`/h/${event.slug}`}>
-                <span>
-                  <Badge tone={event.status === "open" ? "success" : "neutral"}>
-                    {event.status}
-                  </Badge>
-                </span>
-                <strong>{event.name}</strong>
-                <span>{event.tagline}</span>
-                <small>{new Date(event.eventStartsAt).toLocaleDateString()}</small>
-                <b aria-hidden="true">→</b>
-              </Link>
-            ))}
-          </div>
-        ) : null}
-      </section>
-
-      <section className="public-data-note">
-        <span>DATA://</span>
-        <p>
-          TalentRadar processes only disclosed inputs. Read how consent, model use, retention and
-          deletion work before connecting an account.
-        </p>
-        <Link to="/privacy">Read privacy details →</Link>
       </section>
     </div>
   );
 }
 
+function useNow(intervalMs: number) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(timer);
+  }, [intervalMs]);
+  return now;
+}
+
 export function PublicEventPage() {
   const { slug = "" } = useParams();
+  const now = useNow(30_000);
   const event = useQuery({
     queryKey: ["public-event", slug],
     queryFn: () => getPublicEvent(slug),
     retry: false,
   });
 
-  if (event.isPending) return <LoadingState label="Opening event" />;
+  if (event.isPending) return <LoadingState label="opening event" />;
   if (event.isError) {
     return (
-      <div className="contained-page">
+      <Pane title="event not found">
         <EmptyState
           title="This event is not available"
-          action={<ActionLink to="/">Return home</ActionLink>}
-        >
-          The link may be incorrect, the event may still be a draft, or registration may no longer
-          be public.
-        </EmptyState>
-      </div>
+          action={<ActionLink to="/">Home</ActionLink>}
+        />
+      </Pane>
     );
   }
 
+  const data = event.data;
+  const dates: Array<[string, string]> = [
+    ["closes", data.registrationClosesAt],
+    ["results", data.shortlistPublishesAt],
+    ["event", data.eventStartsAt],
+  ];
+  const next =
+    data.status === "upcoming"
+      ? { label: "registration opens", at: data.registrationOpensAt }
+      : data.status === "open"
+        ? { label: "registration closes", at: data.registrationClosesAt }
+        : { label: "event starts", at: data.eventStartsAt };
+  const remaining = countdown(next.at, now);
+
   return (
-    <div className="contained-page event-public-page">
-      <section className="event-public-hero">
-        <Badge tone={event.data.status === "open" ? "success" : "neutral"}>
-          {event.data.status}
-        </Badge>
-        <h1>{event.data.name}</h1>
-        <p>{event.data.tagline}</p>
-        <div className="event-facts">
-          <span>{event.data.mode.replace("_", " ")}</span>
-          {event.data.venue ? <span>{event.data.venue}</span> : null}
-          <span>Starts {new Date(event.data.eventStartsAt).toLocaleString()}</span>
+    <div className="mx-auto grid max-w-6xl gap-12 py-4">
+      <header className="grid gap-4">
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <StateTag state={data.status} />
+          <span className="dim">
+            {[
+              data.mode.replace("_", " "),
+              data.venue,
+              `teams of ${data.teamSize.min}–${data.teamSize.max}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
+        </p>
+        <h1 className="font-display text-[48px] leading-none text-accent sm:text-[72px]">
+          <span className="typed" style={{ "--chars": data.name.length } as CSSProperties}>
+            {data.name}
+          </span>
+        </h1>
+        {data.tagline ? <p className="text-xl">{data.tagline}</p> : null}
+        <div className="mt-2 flex flex-wrap items-end gap-x-10 gap-y-4">
+          {remaining ? (
+            <p className="grid">
+              <span className="font-display text-5xl leading-none text-warn glow">{remaining}</span>
+              <span className="dim">until {next.label}</span>
+            </p>
+          ) : null}
+          {data.status === "open" ? (
+            <ActionLink to={`/participant/apply/${data.slug}`} tone="primary">
+              Apply with GitHub
+            </ActionLink>
+          ) : null}
         </div>
-        {event.data.status === "open" ? (
-          <ActionLink to={`/participant/apply/${event.data.slug}`}>Start application</ActionLink>
-        ) : null}
-        {event.data.status === "upcoming" ? (
-          <p className="muted-copy">
-            Registration opens {new Date(event.data.registrationOpensAt).toLocaleString()}.
-          </p>
-        ) : null}
-        {event.data.status === "closed" ? (
-          <p className="muted-copy">Registration is closed for this event.</p>
-        ) : null}
-      </section>
-      <div className="event-public-grid">
-        <Panel label="01 / EVENT" title="What to expect">
-          <p className="prose-copy">{event.data.description}</p>
-          {event.data.links.length > 0 ? (
-            <div className="hero-actions">
-              {event.data.links.map((link) => (
-                <a href={link.url} key={link.url} rel="noreferrer" target="_blank">
+      </header>
+
+      <div className="grid items-start gap-10 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <article className="grid max-w-2xl gap-5">
+          <div className="prose-tui whitespace-pre-line">{data.description}</div>
+          {data.links.length > 0 ? (
+            <p className="flex flex-wrap gap-x-6 gap-y-1">
+              {data.links.map((link) => (
+                <a
+                  className="tui-link"
+                  href={link.url}
+                  key={link.url}
+                  rel="noreferrer"
+                  target="_blank"
+                >
                   {link.label} ↗
                 </a>
               ))}
-            </div>
+            </p>
           ) : null}
-        </Panel>
-        <Panel label="02 / DEADLINE" title="Registration closes">
-          <time className="deadline-value" dateTime={event.data.registrationClosesAt}>
-            {new Date(event.data.registrationClosesAt).toLocaleString()}
-          </time>
-          <p className="muted-copy">Teams lock at this deadline · {event.data.timezone}.</p>
-        </Panel>
-        <Panel label="03 / REQUIREMENTS" title="What teams are evaluated against">
-          <div className="requirement-editor">
-            {event.data.requirements.map((requirement) => (
-              <div className="requirement-edit-row" key={requirement.skill}>
-                <strong>
-                  {taxonomy.technologies[requirement.skill]?.label ??
-                    taxonomy.domains[requirement.skill]?.label ??
-                    requirement.skill}
-                </strong>
-                <span>Target {requirement.target.toFixed(1)}</span>
-                <span>Weight {requirement.weight}</span>
-                <span>
-                  {requirement.coverage.mode === "any_member"
-                    ? "Any member"
-                    : `${requirement.coverage.minMembers} members`}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Panel>
-        <Panel label="04 / TEAMS" title="Team and capacity rules">
-          <dl className="compact-definition-list">
-            <div>
-              <dt>Team size</dt>
-              <dd>
-                {event.data.teamSize.min}–{event.data.teamSize.max} people
-              </dd>
-            </div>
-            <div>
-              <dt>Participant capacity</dt>
-              <dd>{event.data.capacity} seats</dd>
-            </div>
-            <div>
-              <dt>Shortlist publishes</dt>
-              <dd>{new Date(event.data.shortlistPublishesAt).toLocaleString()}</dd>
-            </div>
-          </dl>
-        </Panel>
+        </article>
+
+        <aside className="grid gap-8">
+          <Pane title="ranked on">
+            <SkillGroups items={data.requirements} idOf={(requirement) => requirement.skill}>
+              {(requirement) => (
+                <div className="flex items-baseline justify-between gap-3" key={requirement.skill}>
+                  <span>{skillLabel(requirement.skill)}</span>
+                  <Bar
+                    value={requirement.target}
+                    cells={5}
+                    label={`${skillLabel(requirement.skill)} target`}
+                  />
+                </div>
+              )}
+            </SkillGroups>
+          </Pane>
+          <Pane title="dates">
+            <dl className="grid gap-2">
+              {dates.map(([label, at]) => (
+                <div className="flex justify-between gap-3" key={label}>
+                  <dt className={Date.parse(at) <= now ? "dim line-through" : "dim"}>{label}</dt>
+                  <dd>
+                    <time dateTime={at}>{formatDate(at)}</time>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </Pane>
+        </aside>
       </div>
     </div>
   );
@@ -362,118 +284,114 @@ export function LoginPage() {
   const error = searchParams.get("error");
   const githubHref = `/auth/github${returnTo?.startsWith("/") ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`;
   return (
-    <div className="narrow-page">
-      <Panel label="AUTH / GITHUB" title="Sign in to TalentRadar">
-        <div className="login-content">
-          <p>
-            GitHub verifies your identity and lets TalentRadar list public repositories for you to
-            choose. The application requests profile and email access only.
-          </p>
-          <dl className="permission-list">
-            <div>
-              <dt>read:user</dt>
-              <dd>Read your public GitHub identity.</dd>
-            </div>
-            <div>
-              <dt>user:email</dt>
-              <dd>Read your verified email for applications.</dd>
-            </div>
-            <div>
-              <dt>Repository access</dt>
-              <dd>Public repositories only. No write permission.</dd>
-            </div>
-          </dl>
+    <div className="mx-auto grid max-w-xl gap-4 pt-6">
+      <Pane title="sign in" active>
+        <div className="grid gap-4">
+          <p>Read-only access to your public profile and email.</p>
           {error ? (
-            <div className="error-state" role="alert">
-              GitHub sign-in did not complete. Please try again.
-            </div>
+            <Notice tone="error" tag="error">
+              GitHub sign-in did not complete. Try again.
+            </Notice>
           ) : null}
-          <a className="btn terminal-action action-primary" href={githubHref}>
-            <span aria-hidden="true">[</span> Continue with GitHub <span aria-hidden="true">]</span>
-          </a>
-          <p className="fine-print">
-            By continuing, you can review the exact consent terms before any profile is processed.
-          </p>
+          <div>
+            <ActionAnchor href={githubHref} tone="primary">
+              Continue with GitHub
+            </ActionAnchor>
+          </div>
         </div>
-      </Panel>
+      </Pane>
+    </div>
+  );
+}
+
+function DocumentPage({
+  title,
+  intro,
+  sections,
+}: {
+  title: string;
+  intro: string;
+  sections: Array<[string, string]>;
+}) {
+  return (
+    <div className="mx-auto max-w-3xl">
+      <Pane title={title}>
+        <article className="prose-tui">
+          <h1 className="sr-only">{title}</h1>
+          <p>{intro}</p>
+          {sections.map(([heading, body]) => (
+            <section key={heading}>
+              <h2>{heading}</h2>
+              <p>{body}</p>
+            </section>
+          ))}
+        </article>
+      </Pane>
     </div>
   );
 }
 
 export function PrivacyPage() {
   return (
-    <article className="document-page">
-      <p className="terminal-kicker">DOCUMENT / PRIVACY</p>
-      <h1>What TalentRadar processes</h1>
-      <p className="document-intro">
-        TalentRadar must explain its data use before a participant submits repositories or a CV.
-      </p>
-      <section>
-        <h2>Inputs</h2>
-        <p>
-          GitHub identity, selected public repositories, a PDF CV, event details and team
-          membership.
-        </p>
-      </section>
-      <section>
-        <h2>Why</h2>
-        <p>
-          Inputs are used to build an evidence-backed profile, evaluate event requirements and show
-          the participant or organizer the resulting evidence and decision.
-        </p>
-      </section>
-      <section>
-        <h2>Model processing</h2>
-        <p>
-          Model use, provider privacy terms and whether CV content is included must be disclosed in
-          the consent shown for the active deployment configuration.
-        </p>
-      </section>
-      <section>
-        <h2>Control</h2>
-        <p>Participants can inspect, challenge, export and request deletion of their own data.</p>
-      </section>
-    </article>
+    <DocumentPage
+      title="privacy"
+      intro="What TalentRadar processes, and why, before you submit repositories or a CV."
+      sections={[
+        [
+          "Inputs",
+          "Your GitHub identity, the public repositories you select, a PDF CV, event details and team membership.",
+        ],
+        [
+          "Why",
+          "To build a profile where every skill cites real files, check it against the event's requirements, and show you and the organizer the result and its evidence.",
+        ],
+        [
+          "Model processing",
+          "One model call per profile reads the selected code and the rendered CV pages. The consent screen states which provider is used and whether CVs must be synthetic.",
+        ],
+        [
+          "Control",
+          "You can inspect every claim in your profile, report a wrong one, export your data and request deletion.",
+        ],
+      ]}
+    />
   );
 }
 
 export function TermsPage() {
   return (
-    <article className="document-page">
-      <p className="terminal-kicker">DOCUMENT / TERMS</p>
-      <h1>How decisions should be used</h1>
-      <p className="document-intro">
-        TalentRadar supports organizer review. It does not replace human responsibility for final
-        selection decisions.
-      </p>
-      <section>
-        <h2>Evidence before automation</h2>
-        <p>
-          Organizers should inspect evidence, borderline teams, flags, corrections and overrides.
-        </p>
-      </section>
-      <section>
-        <h2>Organizer responsibility</h2>
-        <p>
-          Organizers remain responsible for lawful consent, fair criteria and published outcomes.
-        </p>
-      </section>
-      <section>
-        <h2>Service limits</h2>
-        <p>
-          Public-repository evidence is incomplete by nature. Confidence communicates that limit.
-        </p>
-      </section>
-    </article>
+    <DocumentPage
+      title="terms"
+      intro="TalentRadar recommends. The organizer decides, and stays responsible for the decision."
+      sections={[
+        [
+          "Evidence before automation",
+          "Organizers should read evidence for borderline teams, flags, reported corrections and overrides before publishing.",
+        ],
+        [
+          "Organizer responsibility",
+          "Organizers are responsible for lawful consent, fair criteria and the outcomes they publish.",
+        ],
+        [
+          "Limits",
+          "Public code is incomplete evidence of skill. Confidence shows how much evidence exists; low confidence is not a low score.",
+        ],
+      ]}
+    />
   );
 }
 
 export function NotFoundPage() {
   return (
-    <div className="contained-page">
-      <EmptyState title="Route not found" action={<ActionLink to="/">Return home</ActionLink>}>
-        TalentRadar does not have a page at this address.
-      </EmptyState>
+    <div className="mx-auto max-w-xl pt-6">
+      <Pane title="404">
+        <EmptyState
+          title="Nothing lives at this address"
+          action={<ActionLink to="/">Home</ActionLink>}
+        >
+          Press : to jump to any screen.
+        </EmptyState>
+      </Pane>
     </div>
   );
 }

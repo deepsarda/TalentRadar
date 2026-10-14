@@ -5,10 +5,14 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "calibrate": "tsx --env-file-if-exists=../../.env src/cli/calibrate.ts",
     "check:types": "tsc -p tsconfig.json --noEmit",
+    "detect-report": "tsx --env-file-if-exists=../../.env src/cli/detect-report.ts",
     "dev": "tsx watch src/server.ts",
+    "profile": "tsx --env-file-if-exists=../../.env src/cli/profile.ts",
     "start": "node dist/server.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "validate:e2e": "vitest run src/profile-pipeline/e2e.live.test.ts"
   },
   "dependencies": {
     "@google/genai": "2.29.0",

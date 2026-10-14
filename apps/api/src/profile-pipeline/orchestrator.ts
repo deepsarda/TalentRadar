@@ -18,6 +18,12 @@ function stringProperty(
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * Chains the profile stages. `completed` runs after a job is marked done and is retried by the
+ * worker's follow-up sweep if it fails or the process dies, so it must stay idempotent: every
+ * next stage is enqueued with a (profile, stage) dedupe key, which the unique index enforces even
+ * when two workers finish the last two input jobs at the same moment.
+ */
 export function createProfileOrchestrator(db: Db) {
   return {
     async completed(job: ClaimedJob, result?: Record<string, unknown>): Promise<void> {
@@ -43,11 +49,6 @@ export function createProfileOrchestrator(db: Db) {
         ) {
           return;
         }
-        const existingJudge = await db.collection<JobDocument>(collections.jobs).findOne({
-          "payload.profileId": profileId,
-          type: "judge_person",
-        });
-        if (existingJudge) return;
         const fileId = stringProperty(renderJobs[0]?.payload, "fileId");
         if (renderJobs.length === 1 && !fileId) {
           throw new Error("Rendered CV job has no file id");
@@ -62,7 +63,7 @@ export function createProfileOrchestrator(db: Db) {
           db,
           "judge_person",
           { profileId, personId, ...(fileId ? { fileId } : {}) },
-          { maxAttempts: 3 },
+          { maxAttempts: 3, dedupeKey: `${profileId}:judge_person` },
         );
         return;
       }
@@ -70,18 +71,12 @@ export function createProfileOrchestrator(db: Db) {
       if (job.type === "judge_person") {
         const assessmentId = stringProperty(result, "assessmentId");
         if (!assessmentId) throw new Error("Judge job produced no assessment id");
-        const existingAggregate = await db.collection<JobDocument>(collections.jobs).findOne({
-          "payload.profileId": profileId,
-          type: "aggregate_profile",
-        });
-        if (!existingAggregate) {
-          await enqueueJob(
-            db,
-            "aggregate_profile",
-            { profileId, personId, assessmentId },
-            { maxAttempts: 1 },
-          );
-        }
+        await enqueueJob(
+          db,
+          "aggregate_profile",
+          { profileId, personId, assessmentId },
+          { maxAttempts: 1, dedupeKey: `${profileId}:aggregate_profile` },
+        );
       }
     },
 

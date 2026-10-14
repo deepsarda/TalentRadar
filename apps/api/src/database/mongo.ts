@@ -1,6 +1,8 @@
 import { type Db, MongoClient } from "mongodb";
 import type {
   AssessmentDocument,
+  AuditEntryDocument,
+  CorrectionDocument,
   HackathonDocument,
   JobDocument,
   OAuthStateDocument,
@@ -27,6 +29,8 @@ export const collections = {
   sessions: "sessions",
   oauthStates: "oauth_states",
   quickImports: "quick_imports",
+  auditEntries: "audit_entries",
+  corrections: "corrections",
 } as const;
 
 export interface TalentRadarDatabase {
@@ -94,9 +98,15 @@ export async function ensureIndexes(db: Db): Promise<void> {
         { hackathonId: 1, personId: 1 },
         { name: "registration_person_event_unique", unique: true },
       ),
-    db
-      .collection<ShortlistRunDocument>(collections.shortlistRuns)
-      .createIndex({ hackathonId: 1, createdAt: -1 }, { name: "event_runs" }),
+    db.collection<ShortlistRunDocument>(collections.shortlistRuns).createIndexes([
+      { key: { hackathonId: 1, createdAt: -1 }, name: "event_runs" },
+      {
+        key: { hackathonId: 1 },
+        name: "one_published_run_per_event",
+        unique: true,
+        partialFilterExpression: { published: true },
+      },
+    ]),
     db.collection<QuickImportDocument>(collections.quickImports).createIndexes([
       { key: { hackathonId: 1 }, name: "quick_import_event_unique", unique: true },
       { key: { organizerId: 1, updatedAt: -1 }, name: "quick_import_organizer" },
@@ -105,6 +115,17 @@ export async function ensureIndexes(db: Db): Promise<void> {
       { key: { status: 1, runAt: 1 }, name: "job_claim" },
       { key: { status: 1, lockedUntil: 1 }, name: "job_lease_recovery" },
       { key: { "payload.profileId": 1, type: 1, status: 1 }, name: "profile_job_state" },
+      {
+        key: { dedupeKey: 1 },
+        name: "job_dedupe_unique",
+        unique: true,
+        partialFilterExpression: { dedupeKey: { $type: "string" } },
+      },
+      {
+        key: { completedAt: 1 },
+        name: "job_follow_up_pending",
+        partialFilterExpression: { followUpPending: true },
+      },
     ]),
     db.collection<SessionDocument>(collections.sessions).createIndexes([
       { key: { expiresAt: 1 }, name: "session_expiry", expireAfterSeconds: 0 },
@@ -113,8 +134,23 @@ export async function ensureIndexes(db: Db): Promise<void> {
     db
       .collection<OAuthStateDocument>(collections.oauthStates)
       .createIndex({ expiresAt: 1 }, { name: "oauth_state_expiry", expireAfterSeconds: 0 }),
+    // sweepExpiredCvs (participants/data-api.ts) deletes files + chunks via GridFSBucket; a TTL
+    // index here would orphan the chunks. These serve its uploadDate scan and per-person lookups.
+    db.collection("cv.files").createIndexes([
+      { key: { uploadDate: 1 }, name: "cv_retention_sweep" },
+      { key: { "metadata.personId": 1 }, name: "cv_person" },
+    ]),
     db
-      .collection("cv.files")
-      .createIndex({ "metadata.expiresAt": 1 }, { name: "cv_retention_cleanup" }),
+      .collection<RegistrationDocument>(collections.registrations)
+      .createIndex({ cvFileId: 1 }, { name: "registration_cv", sparse: true }),
+    db
+      .collection<RegistrationDocument>(collections.registrations)
+      .createIndex({ hackathonId: 1, status: 1 }, { name: "registration_event_status" }),
+    db
+      .collection<AuditEntryDocument>(collections.auditEntries)
+      .createIndex({ hackathonId: 1, at: -1 }, { name: "event_audit" }),
+    db
+      .collection<CorrectionDocument>(collections.corrections)
+      .createIndex({ personId: 1, status: 1, createdAt: -1 }, { name: "person_corrections" }),
   ]);
 }

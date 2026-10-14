@@ -10,7 +10,12 @@ export interface CommandResult {
 export function runCommand(
   command: string,
   args: string[],
-  options: { cwd?: string; timeoutMs: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv },
+  options: {
+    cwd?: string;
+    timeoutMs: number;
+    signal?: AbortSignal | undefined;
+    env?: NodeJS.ProcessEnv;
+  },
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {

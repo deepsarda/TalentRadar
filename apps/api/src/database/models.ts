@@ -25,7 +25,8 @@ export interface UserDocument {
   year?: string;
   branch?: string;
   city?: string;
-  encryptedAccessToken: string;
+  /** Absent after the participant revokes GitHub access. */
+  encryptedAccessToken?: string;
   createdAt: Date;
   updatedAt: Date;
   lastLoginAt: Date;
@@ -58,6 +59,9 @@ export interface AssessmentDocument {
   model: string;
   promptVersion: string;
   taxonomyVersion: string;
+  /** Absent on assessments stored before rubric/sampler versions were recorded. */
+  rubricVersion?: string;
+  samplerVersion?: string;
   createdAt: Date;
 }
 
@@ -105,6 +109,12 @@ export interface HackathonDocument {
   ranking: RankingParams;
   quotas: QuotaRule[];
   collegeAliases: Record<string, string[]>;
+  /**
+   * The taxonomy the requirements' skill ids and the rubric their target levels refer to, set
+   * from @talentradar/shared when requirements are written. Absent on older documents.
+   */
+  taxonomyVersion?: string;
+  rubricVersion?: string;
   visibility: "draft" | "published" | "closed";
   createdAt: Date;
   updatedAt: Date;
@@ -116,6 +126,8 @@ export interface TeamDocument extends Omit<Team, "teamId" | "memberIds" | "submi
   hackathonId: ObjectId;
   inviteCode: string;
   importKey?: string;
+  /** A Quick Shortlist row with no team name, kept as a team of one so it gets an outcome. */
+  unteamed?: boolean;
   captainId: ObjectId;
   memberIds: ObjectId[];
   status: "draft" | "submitted" | "locked";
@@ -142,6 +154,11 @@ export interface RegistrationDocument {
     | "not_selected"
     | "confirmed"
     | "declined";
+  /** Per-person RSVP deadline; set on selection and later for teams promoted off the waitlist. */
+  rsvpDeadlineAt?: Date;
+  promotedAt?: Date;
+  /** Email outbox: the last status a notice was claimed for (see decision-api deliverNotices). */
+  notifiedStatus?: RegistrationDocument["status"];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -162,6 +179,39 @@ export interface QuickImportDocument {
   updatedAt: Date;
 }
 
+export interface ShortlistRunPersonSnapshot {
+  personId: string;
+  name: string;
+  email?: string;
+  github: string;
+  verified: boolean;
+  /** As entered, and as quotas saw it after the alias map. */
+  college?: string;
+  collegeNormalized?: string;
+  year?: string;
+  branch?: string;
+  profileStatus: ProfileDocument["status"];
+  /** The ready profile that was ranked; null when the person had none. */
+  profile: {
+    profileId: string;
+    version: number;
+    skills: PersonProfile["skills"];
+    novelty: number;
+    flags: PersonProfile["flags"];
+    repos: ProfileDocument["repos"];
+    taxonomyVersion: string;
+    promptVersion?: string;
+    model?: string;
+    builtAt?: Date;
+  } | null;
+}
+
+export interface ShortlistRunSnapshot {
+  versions: { taxonomy: string; rubric?: string; prompts: string[] };
+  teams: Array<Team & { unteamed?: boolean }>;
+  people: ShortlistRunPersonSnapshot[];
+}
+
 export interface ShortlistRunDocument {
   _id: ObjectId;
   hackathonId: ObjectId;
@@ -178,6 +228,8 @@ export interface ShortlistRunDocument {
   swaps: QuotaSwap[];
   quotaReports: QuotaReport[];
   overrides: Array<SelectionOverride & { by: ObjectId; at: Date }>;
+  /** The evidence the run was decided on, frozen at save. Absent on runs saved before it existed. */
+  snapshot?: ShortlistRunSnapshot;
   published: boolean;
   publishedAt?: Date;
   createdBy: ObjectId;
@@ -211,6 +263,11 @@ export interface JobDocument {
   progress: JobProgressEvent[];
   result?: Record<string, unknown>;
   partialThoughts?: string;
+  /** Unique when set: enqueueing the same key twice returns the existing job. */
+  dedupeKey?: string;
+  /** Set when the job is marked done; cleared once its follow-up (next stage) has run. */
+  followUpPending?: boolean;
+  followUpFailures?: number;
   createdAt: Date;
   updatedAt: Date;
   completedAt?: Date;
@@ -230,4 +287,44 @@ export interface OAuthStateDocument {
   returnTo: string;
   createdAt: Date;
   expiresAt: Date;
+}
+
+export type AuditAction =
+  | "event.created"
+  | "draft.saved"
+  | "event.updated"
+  | "event.published"
+  | "event.unpublished"
+  | "run.saved"
+  | "run.published"
+  | "override.added"
+  | "correction.resolved"
+  | "correction.dismissed";
+
+/** Append-only: written with insertOne, never updated or deleted. */
+export interface AuditEntryDocument {
+  _id: ObjectId;
+  hackathonId: ObjectId;
+  actorId: ObjectId;
+  action: AuditAction;
+  /** Field-level summary, e.g. `capacity: 100 → 120`. */
+  changes: string[];
+  note?: string;
+  at: Date;
+}
+
+export type CorrectionReason = "not_my_repo" | "missing_repo" | "level_off";
+
+export interface CorrectionDocument {
+  _id: ObjectId;
+  personId: ObjectId;
+  profileId: ObjectId;
+  profileVersion: number;
+  skill: string;
+  reason: CorrectionReason;
+  note?: string;
+  status: "open" | "resolved" | "dismissed";
+  resolution?: { by: ObjectId; at: Date; note?: string };
+  createdAt: Date;
+  updatedAt: Date;
 }

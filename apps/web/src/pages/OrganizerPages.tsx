@@ -1,25 +1,36 @@
-import {
-  type QuotaRule,
-  type RankingParams,
-  rank,
-  type SelectionOverride,
-  selectShortlist,
-  taxonomy,
-} from "@talentradar/shared";
+import type { QuotaRule } from "@talentradar/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { PromoteQuickForm } from "../components/PromoteQuickForm";
+import { SkillPicker } from "../components/SkillPicker";
+import { useStatusLine } from "../components/statusline";
+import { TimelineFields } from "../components/TimelineFields";
 import {
   ActionButton,
   ActionLink,
-  Badge,
+  CheckRow,
+  countdown,
+  Details,
   EmptyState,
+  ErrorState,
   Field,
-  PageHeading,
-  Panel,
-  ProgressBar,
+  formatDate,
+  formatDateTime,
+  LoadingState,
+  LogView,
+  Notice,
+  Pane,
+  RequiredMark,
+  ScreenHead,
   SelectInput,
-  StepRail,
+  SkillGroups,
+  Slider,
+  Stat,
+  StateTag,
+  Steps,
+  TermTabs,
+  TextAction,
   TextArea,
   TextInput,
 } from "../components/ui";
@@ -28,24 +39,37 @@ import {
   createOrganizerEvent,
   createQuickImport,
   type EventConfigurationInput,
+  type EventDraftStep,
   getCurrentUser,
+  getOrganizerCorrections,
   getOrganizerEvent,
+  getOrganizerEventAudit,
   getOrganizerEventOperations,
   getOrganizerEvents,
-  getOrganizerShortlist,
-  getOrganizerShortlistRun,
   getQuickImport,
+  type OrganizerCorrection,
+  type OrganizerEventDetails,
+  type OrganizerEventSummary,
   publishOrganizerEvent,
-  publishOrganizerShortlistRun,
-  saveOrganizerShortlistRun,
+  resolveOrganizerCorrection,
+  saveOrganizerEventDraft,
   startQuickImport,
+  unpublishOrganizerEvent,
   updateOrganizerEventConfiguration,
   uploadQuickArchive,
   uploadQuickCsv,
 } from "../lib/api";
+import {
+  isoToIstDateTime,
+  istDateTimeToIso,
+  slugify,
+  type TimelineKey,
+  timelineFields,
+} from "../lib/event-fields";
+import { isArea, skillLabel, splitSkills } from "../lib/skills";
 
-const eventSteps = ["Basics", "Timeline", "Teams and seats", "Requirements and quotas"] as const;
-const quickSteps = ["Upload", "Map columns", "Consent", "Build profiles"] as const;
+const eventSteps = ["details", "dates", "teams", "areas", "tools", "quotas"] as const;
+const quickSteps = ["upload", "columns", "consent", "build"] as const;
 const quickMappingFields = [
   { key: "name", label: "Name", required: true },
   { key: "email", label: "Email", required: true },
@@ -59,51 +83,575 @@ const quickMappingFields = [
 ] as const;
 type QuickMapping = Partial<Record<(typeof quickMappingFields)[number]["key"], string>>;
 
-interface RequirementDraft {
-  id: number;
-  skill: string;
-  target: number;
-  weight: number;
-}
+type Requirement = CreateEventInput["requirements"][number];
 
-const technologyOptions = [
-  ...Object.entries(taxonomy.domains).map(([id, domain]) => ({
-    id,
-    label: `${domain.label} · domain`,
-  })),
-  ...Object.entries(taxonomy.technologies).map(([id, technology]) => ({
-    id,
-    label: technology.label,
-  })),
-].sort((left, right) => left.label.localeCompare(right.label));
+const logTime = new Intl.DateTimeFormat("en-IN", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+  timeZone: "Asia/Kolkata",
+});
 
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 40);
-}
+/* ------------------------------------------------------------------ shared editors */
 
-function istDateTimeToIso(value: string): string {
-  return new Date(`${value}:00+05:30`).toISOString();
-}
+/** Type-to-search skill picker, then one row per requirement with target and weight sliders. */
+function RequirementsEditor({
+  value,
+  onChange,
+  keepOne = false,
+  kind,
+}: {
+  /** Every requirement; with `kind`, only that kind is shown and edited, the rest pass through. */
+  value: Requirement[];
+  onChange: (next: Requirement[]) => void;
+  /** Saved events must keep at least one requirement. */
+  keepOne?: boolean;
+  kind?: "area" | "tool";
+}) {
+  const rows =
+    kind === undefined
+      ? value
+      : value.filter((requirement) => (kind === "area") === isArea(requirement.skill));
+  const update = (skill: string, patch: Partial<Requirement>) =>
+    onChange(
+      value.map((requirement) =>
+        requirement.skill === skill ? { ...requirement, ...patch } : requirement,
+      ),
+    );
 
-function isoToIstDateTime(value: string): string {
-  const instant = new Date(value);
-  return new Date(instant.getTime() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 16);
-}
-
-function UnauthenticatedOrganizerNotice({ pending }: { pending: boolean }) {
-  if (pending) return null;
   return (
-    <div className="context-notice">
-      <span aria-hidden="true">i</span>
-      <p>Sign in with GitHub to create events and access organizer-owned records.</p>
-      <ActionLink to="/login" tone="secondary">
-        Sign in
-      </ActionLink>
+    <div className="grid gap-4">
+      <SkillPicker
+        {...(kind ? { kind, label: kind === "area" ? "Add area" : "Add tool" } : {})}
+        exclude={value.map((requirement) => requirement.skill)}
+        onPick={(skill) =>
+          onChange([...value, { skill, target: 3, weight: 3, coverage: { mode: "any_member" } }])
+        }
+      />
+      {rows.length ? (
+        <SkillGroups items={rows} idOf={(requirement) => requirement.skill} className="grid">
+          {(requirement) => {
+            const label = skillLabel(requirement.skill);
+            return (
+              <fieldset
+                key={requirement.skill}
+                className="m-0 grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 gap-y-1 border-x-0 border-t-0 border-b border-line px-0 py-3 last:border-b-0"
+              >
+                <legend className="sr-only">{label}</legend>
+                <span className="truncate font-bold" aria-hidden="true">
+                  {label}
+                </span>
+                <span>
+                  <TextAction
+                    tone="danger"
+                    aria-label={`Remove ${label}`}
+                    disabled={keepOne && value.length === 1}
+                    onClick={() =>
+                      onChange(value.filter((candidate) => candidate.skill !== requirement.skill))
+                    }
+                  >
+                    remove
+                  </TextAction>
+                </span>
+                <div className="col-span-2 grid gap-x-8 gap-y-1 sm:grid-cols-2">
+                  <Slider
+                    compact
+                    label="target"
+                    value={requirement.target}
+                    min={1}
+                    max={5}
+                    step={0.5}
+                    format={(current) => current.toFixed(1)}
+                    onChange={(target) => update(requirement.skill, { target })}
+                  />
+                  <Slider
+                    compact
+                    label="weight"
+                    value={requirement.weight}
+                    min={0}
+                    max={5}
+                    step={1}
+                    // 0 is shown on the profile but not scored; "off" says that without a legend.
+                    format={(current) => (current === 0 ? "off" : `×${current}`)}
+                    onChange={(weight) => update(requirement.skill, { weight })}
+                  />
+                </div>
+              </fieldset>
+            );
+          }}
+        </SkillGroups>
+      ) : null}
+    </div>
+  );
+}
+
+const quotaAttributes: Record<QuotaRule["attribute"], string> = {
+  college: "college",
+  year_of_study: "year of study",
+  branch: "branch",
+  city: "city",
+};
+const quotaOperators: Record<QuotaRule["op"], string> = {
+  equals: "is",
+  not_equals: "is not",
+  in: "is one of",
+  not_in: "is none of",
+};
+const quotaMatches: Record<QuotaRule["match"], string> = {
+  all: "all members match",
+  majority: "most members match",
+  any: "any member matches",
+};
+
+/** "college is not SVNIT Surat — at least 10% of teams, all members match" */
+function describeQuota(quota: QuotaRule) {
+  const value = Array.isArray(quota.value) ? quota.value.join(", ") : quota.value;
+  const share = `at least ${Math.round(quota.minShare * 100)}% of ${quota.unit}`;
+  return `${quotaAttributes[quota.attribute]} ${quotaOperators[quota.op]} ${value} — ${share}${
+    quota.unit === "teams" ? `, ${quotaMatches[quota.match]}` : ""
+  }`;
+}
+
+function QuotaBuilder({
+  value,
+  onChange,
+}: {
+  value: QuotaRule[];
+  onChange: (next: QuotaRule[]) => void;
+}) {
+  const [draft, setDraft] = useState<{
+    attribute: QuotaRule["attribute"];
+    op: QuotaRule["op"];
+    value: string;
+    minShare: number;
+    unit: QuotaRule["unit"];
+    match: QuotaRule["match"];
+  }>({
+    attribute: "college",
+    op: "not_equals",
+    value: "",
+    minShare: 0.1,
+    unit: "teams",
+    match: "all",
+  });
+  const listOperator = draft.op === "in" || draft.op === "not_in";
+  const rawValue = draft.value.trim();
+  const candidate: QuotaRule | null = rawValue
+    ? {
+        ...draft,
+        value: listOperator
+          ? rawValue
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean)
+          : rawValue,
+      }
+    : null;
+  const canAdd =
+    candidate !== null && draft.minShare >= 0.01 && draft.minShare <= 1 && value.length < 20;
+  const add = () => {
+    if (!canAdd || !candidate) return;
+    onChange([...value, candidate]);
+    setDraft((current) => ({ ...current, value: "" }));
+  };
+
+  return (
+    <div className="grid gap-4">
+      {value.length ? (
+        <ul className="grid gap-1">
+          {value.map((quota, index) => (
+            <li
+              className="grid grid-cols-[2ch_minmax(0,1fr)_auto] items-baseline gap-x-2"
+              key={JSON.stringify(quota)}
+            >
+              <span aria-hidden="true" className="text-accent">
+                {index + 1}.
+              </span>
+              <span>{describeQuota(quota)}</span>
+              <TextAction
+                tone="danger"
+                aria-label={`Remove rule ${index + 1}`}
+                onClick={() => onChange(value.filter((other) => other !== quota))}
+              >
+                remove
+              </TextAction>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="dim">No quotas.</p>
+      )}
+      <div className="grid items-start gap-3 sm:grid-cols-2">
+        <Field label="Attribute">
+          <SelectInput
+            value={draft.attribute}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                attribute: event.target.value as QuotaRule["attribute"],
+              }))
+            }
+          >
+            <option value="college">College</option>
+            <option value="year_of_study">Year of study</option>
+            <option value="branch">Branch</option>
+            <option value="city">City</option>
+          </SelectInput>
+        </Field>
+        <Field label="Condition">
+          <SelectInput
+            value={draft.op}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, op: event.target.value as QuotaRule["op"] }))
+            }
+          >
+            <option value="equals">is</option>
+            <option value="not_equals">is not</option>
+            <option value="in">is one of</option>
+            <option value="not_in">is none of</option>
+          </SelectInput>
+        </Field>
+        <Field
+          label="Value"
+          required
+          className="sm:col-span-2"
+          {...(listOperator ? { hint: "comma-separated" } : {})}
+        >
+          <TextInput
+            value={draft.value}
+            placeholder={listOperator ? "SVNIT Surat, NIT Trichy" : "SVNIT Surat"}
+            onChange={(event) => setDraft((current) => ({ ...current, value: event.target.value }))}
+          />
+        </Field>
+        <div className="sm:col-span-2">
+          <Slider
+            label="minimum share"
+            value={draft.minShare}
+            min={0.01}
+            max={1}
+            step={0.01}
+            format={(current) => `${Math.round(current * 100)}%`}
+            onChange={(minShare) => setDraft((current) => ({ ...current, minShare }))}
+          />
+        </div>
+        <Field label="Count">
+          <SelectInput
+            value={draft.unit}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, unit: event.target.value as QuotaRule["unit"] }))
+            }
+          >
+            <option value="teams">Teams</option>
+            <option value="participants">Participants</option>
+          </SelectInput>
+        </Field>
+        <Field label="A team counts when">
+          <SelectInput
+            value={draft.match}
+            disabled={draft.unit === "participants"}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                match: event.target.value as QuotaRule["match"],
+              }))
+            }
+          >
+            <option value="all">All members match</option>
+            <option value="majority">Most members match</option>
+            <option value="any">Any member matches</option>
+          </SelectInput>
+        </Field>
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <ActionButton disabled={!canAdd} onClick={add}>
+          Add rule
+        </ActionButton>
+        {candidate ? <span className="dim">{describeQuota(candidate)}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function AliasEditor({
+  value,
+  onChange,
+}: {
+  value: Record<string, string[]>;
+  onChange: (next: Record<string, string[]>) => void;
+}) {
+  const [canonical, setCanonical] = useState("");
+  const [aliases, setAliases] = useState("");
+  const add = () => {
+    const name = canonical.trim();
+    const names = aliases
+      .split(",")
+      .map((alias) => alias.trim())
+      .filter(Boolean);
+    if (!name || names.length === 0) return;
+    onChange({ ...value, [name]: names });
+    setCanonical("");
+    setAliases("");
+  };
+  const entries = Object.entries(value);
+
+  return (
+    <div className="grid gap-4">
+      {entries.length ? (
+        <ul className="grid gap-1">
+          {entries.map(([name, names]) => (
+            <li className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-2" key={name}>
+              <span>
+                <span className="font-bold">{name}</span>
+                <span className="dim"> ← {names.join(", ")}</span>
+              </span>
+              <TextAction
+                tone="danger"
+                aria-label={`Remove ${name}`}
+                onClick={() => {
+                  const next = { ...value };
+                  delete next[name];
+                  onChange(next);
+                }}
+              >
+                remove
+              </TextAction>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="dim">No aliases.</p>
+      )}
+      <div className="grid items-start gap-3 sm:grid-cols-2">
+        <Field label="College" required>
+          <TextInput
+            value={canonical}
+            placeholder="SVNIT Surat"
+            onChange={(event) => setCanonical(event.target.value)}
+          />
+        </Field>
+        <Field label="Other spellings" hint="comma-separated" required>
+          <TextInput
+            value={aliases}
+            placeholder="SVNIT, NIT Surat"
+            onChange={(event) => setAliases(event.target.value)}
+          />
+        </Field>
+      </div>
+      <div>
+        <ActionButton disabled={!canonical.trim() || !aliases.trim()} onClick={add}>
+          Add alias
+        </ActionButton>
+      </div>
+    </div>
+  );
+}
+
+function TeamSizeFields({
+  min,
+  max,
+  capacity,
+  onMin,
+  onMax,
+  onCapacity,
+}: {
+  min: number;
+  max: number;
+  capacity: number;
+  onMin: (value: number) => void;
+  onMax: (value: number) => void;
+  onCapacity: (value: number) => void;
+}) {
+  return (
+    <div className="grid items-start gap-4 sm:grid-cols-3">
+      <Field label="Min team size" hint="1 = solo" required>
+        <TextInput
+          type="number"
+          min="1"
+          max="6"
+          value={min}
+          onChange={(event) => onMin(Number(event.target.value))}
+        />
+      </Field>
+      <Field label="Max team size" required {...(min > max ? { error: "below the minimum" } : {})}>
+        <TextInput
+          type="number"
+          min="1"
+          max="6"
+          value={max}
+          onChange={(event) => onMax(Number(event.target.value))}
+        />
+      </Field>
+      <Field label="Seats" required>
+        <TextInput
+          type="number"
+          min="1"
+          max="5000"
+          value={capacity}
+          onChange={(event) => onCapacity(Number(event.target.value))}
+        />
+      </Field>
+    </div>
+  );
+}
+
+/** A titled block inside a single-column form; blocks are spaced, not boxed. */
+function FormSection({
+  title,
+  meta,
+  children,
+}: {
+  title: string;
+  meta?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="grid gap-4">
+      <h2 className="font-display text-2xl text-accent">
+        {title}
+        {meta ? <span className="dim text-lg"> {meta}</span> : null}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+/** Back on the left; on the right, the first missing thing (if any) and the primary action. */
+function WizardFooter({
+  onBack,
+  missing,
+  children,
+}: {
+  onBack?: () => void;
+  missing?: string | null;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <ActionButton tone="quiet" disabled={!onBack} onClick={() => onBack?.()}>
+        Back
+      </ActionButton>
+      <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+        {missing ? <span className="dim">~ {missing}</span> : null}
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** The message of the first failing check, or null when every check passes. */
+function firstMissing(checks: Array<[boolean, string]>) {
+  return checks.find(([ok]) => !ok)?.[1] ?? null;
+}
+
+function plural(count: number, word: string) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+/* ------------------------------------------------------------------ dashboard */
+
+function SignInNotice() {
+  return (
+    <Notice
+      tone="info"
+      action={
+        <ActionLink to="/login?returnTo=%2Forganizer" tone="primary">
+          Sign in with GitHub
+        </ActionLink>
+      }
+    >
+      You're signed out.
+    </Notice>
+  );
+}
+
+function eventHref(event: OrganizerEventSummary) {
+  if (event.kind === "quick") return `/organizer/quick/${event.id}/import`;
+  // An unfinished draft reopens in the wizard at the step it still needs.
+  if (event.missing) return `/organizer/events/new?draft=${event.id}`;
+  return `/organizer/events/${event.id}`;
+}
+
+type EventTab = "live" | "upcoming" | "past" | "quick";
+
+const eventTabs: Array<{
+  id: EventTab;
+  label: string;
+  command: string;
+  noun: string;
+  matches: (event: OrganizerEventSummary) => boolean;
+}> = [
+  {
+    id: "live",
+    label: "live",
+    command: "talentradar events ls --live",
+    noun: "No live events",
+    matches: (event) => event.kind === "event" && event.visibility === "published",
+  },
+  {
+    id: "upcoming",
+    label: "upcoming",
+    command: "talentradar events ls --upcoming",
+    noun: "No drafts",
+    matches: (event) => event.kind === "event" && event.visibility === "draft",
+  },
+  {
+    id: "past",
+    label: "past",
+    command: "talentradar events ls --past",
+    noun: "No past events",
+    matches: (event) => event.kind === "event" && event.visibility === "closed",
+  },
+  {
+    id: "quick",
+    label: "quick",
+    command: "talentradar quick ls",
+    noun: "No quick shortlists",
+    matches: (event) => event.kind === "quick",
+  },
+];
+
+function EventRows({ events }: { events: OrganizerEventSummary[] }) {
+  const navigate = useNavigate();
+  return (
+    <div className="table-scroll">
+      <table className="tui-table cards">
+        <caption className="sr-only">Your events</caption>
+        <thead>
+          <tr>
+            <th scope="col">event</th>
+            <th scope="col">state</th>
+            <th scope="col">closes</th>
+            <th scope="col">starts</th>
+            <th scope="col">
+              <span className="sr-only">open</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((event) => (
+            <tr key={event.id} data-clickable onClick={() => navigate(eventHref(event))}>
+              <th scope="row" data-label="event" className="font-bold">
+                <Link to={eventHref(event)} className="hover:text-accent">
+                  {event.name}
+                </Link>
+              </th>
+              <td data-label="state">
+                <StateTag state={event.visibility} />
+              </td>
+              <td data-label="closes">
+                {event.registrationClosesAt ? formatDate(event.registrationClosesAt) : "—"}
+              </td>
+              <td data-label="starts">
+                {event.eventStartsAt ? formatDate(event.eventStartsAt) : "—"}
+              </td>
+              <td className="dim num max-[720px]:hidden!" aria-hidden="true">
+                open ›
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -116,137 +664,106 @@ export function OrganizerDashboard() {
     enabled: Boolean(account.data),
     retry: false,
   });
+  const [chosenTab, setChosenTab] = useState<EventTab | null>(null);
   const organizerEvents = events.data ?? [];
-  const fullEvents = organizerEvents.filter((event) => event.kind === "event");
-  const quickEvents = organizerEvents.filter((event) => event.kind === "quick");
+  const groups = eventTabs.map((tab) => ({ ...tab, rows: organizerEvents.filter(tab.matches) }));
+  const tab =
+    chosenTab ?? groups.find((group) => group.rows.length > 0)?.id ?? eventTabs[0]?.id ?? "live";
+  const current = groups.find((group) => group.id === tab) ?? groups[0];
 
   return (
-    <div className="portal-page organizer-dashboard">
-      <PageHeading
-        eyebrow="ORGANIZER / WORKSPACE"
-        title="Events and shortlist runs"
-        description="Create a full event or bring an existing registration sheet into the same evidence and ranking engine."
-        action={
+    <div className="mx-auto grid max-w-6xl gap-6">
+      <ScreenHead
+        title="Your events"
+        actions={
           <>
-            <ActionLink to="/organizer/events/new">New event</ActionLink>
-            <ActionLink to="/organizer/quick/new" tone="secondary">
-              Quick shortlist
+            <ActionLink to="/organizer/quick/new">Quick shortlist</ActionLink>
+            <ActionLink to="/organizer/events/new" tone="primary">
+              New event
             </ActionLink>
           </>
         }
       />
-      {!account.data ? <UnauthenticatedOrganizerNotice pending={account.isPending} /> : null}
-      <div className="metric-strip">
-        <div>
-          <span>UPCOMING</span>
-          <strong>{fullEvents.filter((event) => event.visibility === "draft").length}</strong>
-          <small>Draft events</small>
-        </div>
-        <div>
-          <span>LIVE</span>
-          <strong>{fullEvents.filter((event) => event.visibility === "published").length}</strong>
-          <small>Published events</small>
-        </div>
-        <div>
-          <span>PAST</span>
-          <strong>{fullEvents.filter((event) => event.visibility === "closed").length}</strong>
-          <small>Closed records</small>
-        </div>
-        <div>
-          <span>QUICK RUNS</span>
-          <strong>{quickEvents.length}</strong>
-          <small>Imported workspaces</small>
-        </div>
-      </div>
 
-      <div className="dashboard-grid">
-        <Panel
-          label="01 / EVENTS"
-          title="Hackathon workspace"
-          className="span-two"
-          action={
-            <ActionLink to="/organizer/events/new" tone="quiet">
-              Create event
-            </ActionLink>
-          }
-        >
-          {events.isPending && account.data ? (
-            <div className="loading-state">Reading event records…</div>
+      <TermTabs
+        label="events"
+        tabs={groups.map((group) => ({
+          id: group.id,
+          label: group.label,
+          ...(events.data ? { count: group.rows.length } : {}),
+        }))}
+        active={tab}
+        onChange={setChosenTab}
+        command={current?.command ?? "talentradar events ls"}
+        {...(account.data ? { user: account.data.login } : {})}
+      >
+        <div className="px-4">
+          {!account.data && !account.isPending ? <SignInNotice /> : null}
+          {events.isPending && account.data ? <LoadingState label="reading your events" /> : null}
+          {events.isError ? (
+            <ErrorState message={events.error.message} retry={() => void events.refetch()} />
           ) : null}
-          {events.isError ? <div className="error-state">{events.error.message}</div> : null}
-          {organizerEvents.length === 0 && !events.isPending ? (
+          {events.data && current && current.rows.length === 0 ? (
             <EmptyState
-              title="No events in this workspace"
-              action={<ActionLink to="/organizer/events/new">Create the first event</ActionLink>}
-            >
-              Draft, live, and past events appear here with registration, team, and profile-build
-              counts from the service.
-            </EmptyState>
+              title={current.noun}
+              action={
+                current.id === "quick" ? (
+                  <ActionLink to="/organizer/quick/new">Quick shortlist</ActionLink>
+                ) : (
+                  <ActionLink to="/organizer/events/new">New event</ActionLink>
+                )
+              }
+            />
           ) : null}
-          {organizerEvents.length > 0 ? (
-            <div className="event-table">
-              <div className="table-row table-head">
-                <span>EVENT</span>
-                <span>STATE</span>
-                <span>REGISTRATION</span>
-                <span>START</span>
-                <span />
-              </div>
-              {organizerEvents.map((event) => (
-                <div className="table-row" key={event.id}>
-                  <strong>
-                    {event.name} {event.kind === "quick" ? <small>QUICK</small> : null}
-                  </strong>
-                  <Badge tone={event.visibility === "published" ? "success" : "neutral"}>
-                    {event.visibility}
-                  </Badge>
-                  <span>
-                    {event.registrationClosesAt
-                      ? new Date(event.registrationClosesAt).toLocaleDateString()
-                      : "Not set"}
-                  </span>
-                  <span>
-                    {event.eventStartsAt
-                      ? new Date(event.eventStartsAt).toLocaleDateString()
-                      : "Not set"}
-                  </span>
-                  <ActionLink
-                    to={
-                      event.kind === "quick"
-                        ? `/organizer/quick/${event.id}/import`
-                        : `/organizer/events/${event.id}`
-                    }
-                    tone="quiet"
-                  >
-                    Open
-                  </ActionLink>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </Panel>
-        <Panel label="02 / IMPORT" title="Already have registrations?">
-          <p className="prose-copy">
-            Upload a CSV from your existing form, confirm its columns and consent, then build
-            unverified profiles from public GitHub accounts.
-          </p>
-          <ul className="terminal-list">
-            <li>UTF-8 CSV, up to 2,000 rows</li>
-            <li>Optional CV ZIP, up to 200 MB</li>
-            <li>Same shortlist controls and explanations</li>
-          </ul>
-          <ActionLink to="/organizer/quick/new" tone="secondary">
-            Start quick shortlist
-          </ActionLink>
-        </Panel>
-      </div>
+        </div>
+        {current && current.rows.length > 0 ? <EventRows events={current.rows} /> : null}
+      </TermTabs>
     </div>
   );
 }
 
+/* ------------------------------------------------------------------ event wizard */
+
+/** Which server step each wizard screen saves; areas and tools share the requirements list. */
+const draftStepOf = [
+  "details",
+  "dates",
+  "teams",
+  "requirements",
+  "requirements",
+  "quotas",
+] as const;
+
+/** Where a reopened draft continues: the first step it still needs. */
+function resumeStep(event: OrganizerEventDetails) {
+  if (event.missing === "dates") return 1;
+  if (event.missing === "requirements") return 2;
+  return eventSteps.length - 1;
+}
+
+/** Wait after the last keystroke before autosaving a valid step. */
+const AUTOSAVE_DELAY_MS = 1500;
+
 export function EventWizardPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { post } = useStatusLine();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const draftId = searchParams.get("draft");
+  const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
+  const draft = useQuery({
+    queryKey: ["organizer-event", draftId],
+    queryFn: () => getOrganizerEvent(draftId ?? ""),
+    enabled: Boolean(draftId && account.data),
+    retry: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const [hydrated, setHydrated] = useState(false);
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  /** JSON of the last payload the server accepted, per server step. */
+  const saved = useRef<Partial<Record<EventDraftStep["step"], string>>>({});
+  /** JSON of the raw inputs behind it (valid or not), to notice edits not stored yet. */
+  const baseline = useRef<Partial<Record<EventDraftStep["step"], string>>>({});
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -256,7 +773,7 @@ export function EventWizardPage() {
   const [bannerUrl, setBannerUrl] = useState("");
   const [mode, setMode] = useState<CreateEventInput["mode"]>("in_person");
   const [venue, setVenue] = useState("");
-  const [timeline, setTimeline] = useState({
+  const [timeline, setTimeline] = useState<Record<TimelineKey, string>>({
     registrationOpensAt: "",
     registrationClosesAt: "",
     shortlistPublishesAt: "",
@@ -267,45 +784,46 @@ export function EventWizardPage() {
   const [minimumTeamSize, setMinimumTeamSize] = useState(2);
   const [maximumTeamSize, setMaximumTeamSize] = useState(4);
   const [capacity, setCapacity] = useState(100);
-  const [requirements, setRequirements] = useState<RequirementDraft[]>([]);
-  const [requirementSkill, setRequirementSkill] = useState("");
-  const [nextRequirementId, setNextRequirementId] = useState(1);
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [links, setLinks] = useState<Array<{ label: string; url: string }>>([]);
   const [linkDraft, setLinkDraft] = useState({ label: "", url: "" });
   const [quotas, setQuotas] = useState<QuotaRule[]>([]);
-  const [quotaDraft, setQuotaDraft] = useState<{
-    attribute: QuotaRule["attribute"];
-    op: QuotaRule["op"];
-    value: string;
-    minShare: number;
-    unit: QuotaRule["unit"];
-    match: NonNullable<QuotaRule["match"]>;
-  }>({
-    attribute: "college",
-    op: "not_equals",
-    value: "",
-    minShare: 0.1,
-    unit: "teams",
-    match: "all",
-  });
   const [collegeAliases, setCollegeAliases] = useState<Record<string, string[]>>({});
-  const [aliasDraft, setAliasDraft] = useState({ canonical: "", aliases: "" });
 
-  const addRequirement = () => {
-    if (!requirementSkill || requirements.some((item) => item.skill === requirementSkill)) return;
-    setRequirements((current) => [
-      ...current,
-      { id: nextRequirementId, skill: requirementSkill, target: 3, weight: 3 },
-    ]);
-    setNextRequirementId((value) => value + 1);
-    setRequirementSkill("");
-  };
-
-  const updateRequirement = (id: number, key: "target" | "weight", value: number) => {
-    setRequirements((current) =>
-      current.map((item) => (item.id === id ? { ...item, [key]: value } : item)),
-    );
-  };
+  // Reopening ?draft=<id> fills every step from the server and continues where it stopped.
+  useEffect(() => {
+    const event = draft.data;
+    if (!event || hydrated) return;
+    if (event.visibility !== "draft") {
+      navigate(`/organizer/events/${event.id}`, { replace: true });
+      return;
+    }
+    setName(event.name);
+    setSlug(event.slug);
+    setTagline(event.tagline);
+    setDescription(event.description);
+    setLogoUrl(event.logoUrl ?? "");
+    setBannerUrl(event.bannerUrl ?? "");
+    setMode(event.mode);
+    setVenue(event.venue ?? "");
+    setLinks(event.links);
+    const eventTimeline = event.timeline;
+    if (eventTimeline) {
+      setTimeline(
+        Object.fromEntries(
+          timelineFields.map(([key]) => [key, isoToIstDateTime(eventTimeline[key])]),
+        ) as Record<TimelineKey, string>,
+      );
+    }
+    setMinimumTeamSize(event.teamSize.min);
+    setMaximumTeamSize(event.teamSize.max);
+    setCapacity(event.capacity);
+    setRequirements(event.requirements);
+    setQuotas(event.quotas);
+    setCollegeAliases(event.collegeAliases);
+    setStep(resumeStep(event));
+    setHydrated(true);
+  }, [draft.data, hydrated, navigate]);
 
   const addLink = () => {
     const label = linkDraft.label.trim();
@@ -315,33 +833,8 @@ export function EventWizardPage() {
     setLinkDraft({ label: "", url: "" });
   };
 
-  const addQuota = () => {
-    const rawValue = quotaDraft.value.trim();
-    if (!rawValue || quotas.length >= 20) return;
-    const value =
-      quotaDraft.op === "in" || quotaDraft.op === "not_in"
-        ? rawValue
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean)
-        : rawValue;
-    setQuotas((current) => [...current, { ...quotaDraft, value }]);
-    setQuotaDraft((current) => ({ ...current, value: "" }));
-  };
-
-  const addAlias = () => {
-    const canonical = aliasDraft.canonical.trim();
-    const aliases = aliasDraft.aliases
-      .split(",")
-      .map((alias) => alias.trim())
-      .filter(Boolean);
-    if (!canonical || aliases.length === 0) return;
-    setCollegeAliases((current) => ({ ...current, [canonical]: aliases }));
-    setAliasDraft({ canonical: "", aliases: "" });
-  };
-
   const timelineComplete = Object.values(timeline).every(Boolean);
-  const stepValid = [
+  const stepValidity = [
     name.trim().length >= 3 &&
       Boolean(slug) &&
       Boolean(tagline.trim()) &&
@@ -349,688 +842,444 @@ export function EventWizardPage() {
       (mode === "online" || Boolean(venue.trim())),
     timelineComplete,
     minimumTeamSize <= maximumTeamSize && capacity > 0,
-    requirements.length > 0 && requirements.some((requirement) => requirement.weight > 0),
+    true,
+    // Areas and tools are each optional; together they need one scored skill.
+    requirements.some((requirement) => requirement.weight > 0),
+    Boolean(account.data),
   ];
+  const emptyDate = timelineFields.find(([key]) => !timeline[key]);
+  const missing = [
+    firstMissing([
+      [name.trim().length >= 3, "add an event name"],
+      [Boolean(slug), "add a public link"],
+      [Boolean(tagline.trim()), "add a tagline"],
+      [Boolean(description.trim()), "add a description"],
+      [mode === "online" || Boolean(venue.trim()), "add a venue"],
+    ]),
+    emptyDate ? `set ${emptyDate[1].toLowerCase()}` : null,
+    firstMissing([
+      [minimumTeamSize <= maximumTeamSize, "fix team size"],
+      [capacity > 0, "add seats"],
+    ]),
+    null,
+    firstMissing([
+      [requirements.length > 0, "add an area or a tool"],
+      [stepValidity[4] ?? false, "weight one skill"],
+    ]),
+    firstMissing([[Boolean(account.data) || account.isPending, "sign in first"]]),
+  ][step];
 
-  const createEvent = useMutation({
-    mutationFn: createOrganizerEvent,
-    onSuccess: async (event) => {
+  /** The current screen's server step, or null while it is not valid yet. */
+  const payloadFor = (index: number): EventDraftStep | null => {
+    if (!stepValidity[index]) return null;
+    const stepName = draftStepOf[index];
+    if (stepName === "details") {
+      return {
+        step: "details",
+        name: name.trim(),
+        slug,
+        tagline: tagline.trim(),
+        description: description.trim(),
+        ...(logoUrl ? { logoUrl } : {}),
+        ...(bannerUrl ? { bannerUrl } : {}),
+        links,
+        mode,
+        ...(venue.trim() && mode !== "online" ? { venue: venue.trim() } : {}),
+      };
+    }
+    if (stepName === "dates") {
+      return {
+        step: "dates",
+        timeline: {
+          timezone: "Asia/Kolkata",
+          ...(Object.fromEntries(
+            timelineFields.map(([key]) => [key, istDateTimeToIso(timeline[key])]),
+          ) as Record<TimelineKey, string>),
+        },
+      };
+    }
+    if (stepName === "teams") {
+      return {
+        step: "teams",
+        teamSize: { min: minimumTeamSize, max: maximumTeamSize },
+        capacity,
+      };
+    }
+    if (stepName === "requirements") {
+      return {
+        step: "requirements",
+        requirements: requirements.map((requirement) => ({
+          skill: requirement.skill,
+          target: requirement.target,
+          weight: requirement.weight,
+          coverage: requirement.coverage,
+        })),
+      };
+    }
+    return { step: "quotas", quotas, collegeAliases };
+  };
+
+  /** The step's inputs as typed, valid or not. */
+  const rawFor = (index: number) =>
+    JSON.stringify(
+      [
+        { name, slug, tagline, description, logoUrl, bannerUrl, mode, venue, links },
+        timeline,
+        [minimumTeamSize, maximumTeamSize, capacity],
+        requirements,
+        requirements,
+        [quotas, collegeAliases],
+      ][index],
+    );
+
+  const saveStep = useMutation({
+    mutationFn: async ({ payload }: { payload: EventDraftStep; raw: string }) => {
+      if (draftId) return saveOrganizerEventDraft(draftId, payload);
+      if (payload.step !== "details") throw new Error("Save the details first");
+      const { step: _details, ...detailsInput } = payload;
+      return createOrganizerEvent(detailsInput);
+    },
+    onSuccess: async (event, { payload, raw }) => {
+      saved.current[payload.step] = JSON.stringify(payload);
+      baseline.current[payload.step] = raw;
+      setSavedAt(new Date());
+      if (draftId) {
+        queryClient.setQueryData(["organizer-event", draftId], event);
+      } else {
+        // What is on screen is the draft; no need to load it back.
+        setHydrated(true);
+        setSearchParams({ draft: event.id }, { replace: true });
+        post("Draft created.");
+      }
       await queryClient.invalidateQueries({ queryKey: ["organizer-events"] });
-      navigate(`/organizer/events/${event.id}`);
     },
   });
 
-  const submit = () => {
-    if (!stepValid.every(Boolean)) return;
-    createEvent.mutate({
-      name: name.trim(),
-      slug,
-      tagline: tagline.trim(),
-      description: description.trim(),
-      ...(logoUrl ? { logoUrl } : {}),
-      ...(bannerUrl ? { bannerUrl } : {}),
-      links,
-      mode,
-      ...(venue ? { venue: venue.trim() } : {}),
-      timeline: {
-        timezone: "Asia/Kolkata",
-        registrationOpensAt: istDateTimeToIso(timeline.registrationOpensAt),
-        registrationClosesAt: istDateTimeToIso(timeline.registrationClosesAt),
-        shortlistPublishesAt: istDateTimeToIso(timeline.shortlistPublishesAt),
-        rsvpDeadlineAt: istDateTimeToIso(timeline.rsvpDeadlineAt),
-        eventStartsAt: istDateTimeToIso(timeline.eventStartsAt),
-        eventEndsAt: istDateTimeToIso(timeline.eventEndsAt),
-      },
-      teamSize: { min: minimumTeamSize, max: maximumTeamSize },
-      capacity,
-      requirements: requirements.map((requirement) => ({
-        skill: requirement.skill,
-        target: requirement.target,
-        weight: requirement.weight,
-        coverage: { mode: "any_member" },
-      })),
-      quotas,
-      collegeAliases,
-    });
+  // A fresh wizard starts from its defaults; a reopened draft from what the server has.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: snapshot once per hydration change
+  useEffect(() => {
+    if (draftId && !hydrated) return;
+    for (let index = 0; index < eventSteps.length; index += 1) {
+      const stepName = draftStepOf[index];
+      if (!stepName) continue;
+      baseline.current[stepName] ??= rawFor(index);
+      const payload = hydrated ? payloadFor(index) : null;
+      if (payload) saved.current[stepName] ??= JSON.stringify(payload);
+    }
+  }, [hydrated]);
+
+  const currentPayload = payloadFor(step);
+  const currentJson = currentPayload ? JSON.stringify(currentPayload) : null;
+  const currentStepName = draftStepOf[step] ?? "details";
+  const unsaved = currentJson !== saved.current[currentStepName];
+  const signedIn = Boolean(account.data);
+
+  const currentRaw = rawFor(step);
+  const edited = currentRaw !== baseline.current[currentStepName];
+
+  // Autosave: a valid step of an existing draft is stored shortly after the last change.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the payload's content
+  useEffect(() => {
+    if (!signedIn || !draftId || !currentPayload || !unsaved || saveStep.isPending) return;
+    // A rejected payload is not retried until it changes.
+    if (saveStep.isError && JSON.stringify(saveStep.variables?.payload) === currentJson) return;
+    const timer = window.setTimeout(
+      () => saveStep.mutate({ payload: currentPayload, raw: currentRaw }),
+      AUTOSAVE_DELAY_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [currentJson, draftId, signedIn, unsaved, saveStep.isPending]);
+
+  // Leaving with edits the server has not stored (invalid, pending or signed out) asks first.
+  useEffect(() => {
+    if (!edited) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [edited]);
+
+  /** Saves the step when signed in (creating the draft on the first one), then moves on. */
+  const advance = async () => {
+    if (!stepValidity[step]) return;
+    if (signedIn && currentPayload && (unsaved || !draftId)) {
+      try {
+        await saveStep.mutateAsync({ payload: currentPayload, raw: currentRaw });
+      } catch {
+        return; // the error is shown under the footer; stay on this step
+      }
+    }
+    setStep((value) => Math.min(eventSteps.length - 1, value + 1));
   };
 
+  const finish = async () => {
+    if (!stepValidity.every(Boolean) || !currentPayload) return;
+    try {
+      const event =
+        unsaved || !draftId
+          ? await saveStep.mutateAsync({ payload: currentPayload, raw: currentRaw })
+          : null;
+      const id = event?.id ?? draftId;
+      if (id) navigate(`/organizer/events/${id}`);
+    } catch {
+      // shown under the footer
+    }
+  };
+
+  if (draftId && (draft.isPending || (draft.isSuccess && !hydrated)) && account.data) {
+    return <LoadingState label="opening draft" />;
+  }
+  if (draftId && draft.isError) return <EventUnavailable message={draft.error.message} />;
+
   return (
-    <div className="portal-page wizard-page">
-      <PageHeading
-        eyebrow="ORGANIZER / NEW EVENT"
-        title="Create a hackathon workspace"
-        description="Configure the public page, application timeline, team rules, and transparent shortlist parameters."
-      />
-      <StepRail steps={eventSteps} current={step} />
-      <div className="wizard-layout">
-        <Panel
-          label={`STEP ${step + 1} / ${eventSteps.length}`}
-          title={eventSteps[step] ?? eventSteps[0]}
-          className="wizard-main"
-        >
-          {step === 0 ? (
-            <div className="form-grid">
-              <Field label="Event name" hint="3–80 characters; required.">
-                <TextInput
-                  value={name}
-                  onChange={(event) => {
-                    setName(event.target.value);
-                    if (!slug) setSlug(slugify(event.target.value));
-                  }}
-                  placeholder="Hackathon name"
-                  maxLength={80}
-                />
-              </Field>
-              <Field
-                label="Public slug"
-                hint={slug ? `Public URL: /h/${slug}` : "Lowercase letters, numbers and hyphens."}
-              >
-                <TextInput
-                  value={slug}
-                  onChange={(event) => setSlug(slugify(event.target.value))}
-                  placeholder="event-name"
-                  maxLength={40}
-                />
-              </Field>
-              <Field label="Tagline" className="full-field">
-                <TextInput
-                  value={tagline}
-                  onChange={(event) => setTagline(event.target.value)}
-                  placeholder="A concise line for the public event page"
-                  maxLength={140}
-                />
-              </Field>
-              <Field
-                label="Description"
-                hint="Markdown, up to 5,000 characters."
-                className="full-field"
-              >
-                <TextArea
-                  value={description}
-                  onChange={(event) => setDescription(event.target.value)}
-                  rows={8}
-                  placeholder="Rules, prizes, themes, schedule and participation details"
-                  maxLength={5000}
-                />
-              </Field>
-              <Field label="Logo URL">
-                <TextInput
-                  value={logoUrl}
-                  onChange={(event) => setLogoUrl(event.target.value)}
-                  type="url"
-                  placeholder="https://…"
-                />
-              </Field>
-              <Field label="Banner URL">
-                <TextInput
-                  value={bannerUrl}
-                  onChange={(event) => setBannerUrl(event.target.value)}
-                  type="url"
-                  placeholder="https://…"
-                />
-              </Field>
-              <Field label="Mode">
-                <SelectInput
-                  value={mode}
-                  onChange={(event) => setMode(event.target.value as CreateEventInput["mode"])}
-                >
-                  <option value="in_person">In person</option>
-                  <option value="online">Online</option>
-                  <option value="hybrid">Hybrid</option>
-                </SelectInput>
-              </Field>
-              <Field
-                label="Venue"
-                hint={
-                  mode === "online"
-                    ? "Optional for online events."
-                    : "Required for in-person and hybrid events."
-                }
-              >
-                <TextInput
-                  value={venue}
-                  onChange={(event) => setVenue(event.target.value)}
-                  placeholder="Building, campus or city"
-                  disabled={mode === "online"}
-                />
-              </Field>
-              <div className="repeater full-field">
-                <div>
-                  <strong>Event links</strong>
-                  <span>Discord, rulebook, website, social channels</span>
-                </div>
-                <div className="link-row">
-                  <TextInput
-                    aria-label="Link label"
-                    placeholder="Label"
-                    value={linkDraft.label}
-                    onChange={(event) =>
-                      setLinkDraft((current) => ({ ...current, label: event.target.value }))
-                    }
-                  />
-                  <TextInput
-                    aria-label="Link URL"
-                    type="url"
-                    placeholder="https://…"
-                    value={linkDraft.url}
-                    onChange={(event) =>
-                      setLinkDraft((current) => ({ ...current, url: event.target.value }))
-                    }
-                  />
-                  <ActionButton
-                    tone="secondary"
-                    disabled={
-                      !linkDraft.label.trim() ||
-                      !URL.canParse(linkDraft.url.trim()) ||
-                      links.length >= 12
-                    }
-                    onClick={addLink}
-                  >
-                    Add link
-                  </ActionButton>
-                </div>
-                {links.length ? (
-                  <div className="draft-item-list">
-                    {links.map((link) => (
-                      <div key={`${link.label}-${link.url}`}>
-                        <span>
-                          <strong>{link.label}</strong>
-                          <small>{link.url}</small>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setLinks((current) => current.filter((candidate) => candidate !== link))
-                          }
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
+    <div className="mx-auto grid max-w-2xl gap-10">
+      <div className="grid gap-6">
+        <ScreenHead title="Create a hackathon workspace" />
+        {!account.data && !account.isPending ? <SignInNotice /> : null}
+        <Steps
+          steps={eventSteps}
+          current={step}
+          onSelect={(index) => {
+            if (index < step) setStep(index);
+          }}
+        />
+      </div>
 
-          {step === 1 ? (
-            <div className="timeline-grid">
-              <Field label="Registration opens">
-                <TextInput
-                  type="datetime-local"
-                  value={timeline.registrationOpensAt}
-                  onChange={(event) =>
-                    setTimeline((current) => ({
-                      ...current,
-                      registrationOpensAt: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-              <Field label="Registration closes" hint="Teams lock at this time.">
-                <TextInput
-                  type="datetime-local"
-                  value={timeline.registrationClosesAt}
-                  onChange={(event) =>
-                    setTimeline((current) => ({
-                      ...current,
-                      registrationClosesAt: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-              <Field label="Shortlist published">
-                <TextInput
-                  type="datetime-local"
-                  value={timeline.shortlistPublishesAt}
-                  onChange={(event) =>
-                    setTimeline((current) => ({
-                      ...current,
-                      shortlistPublishesAt: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-              <Field label="RSVP deadline">
-                <TextInput
-                  type="datetime-local"
-                  value={timeline.rsvpDeadlineAt}
-                  onChange={(event) =>
-                    setTimeline((current) => ({ ...current, rsvpDeadlineAt: event.target.value }))
-                  }
-                />
-              </Field>
-              <Field label="Event starts">
-                <TextInput
-                  type="datetime-local"
-                  value={timeline.eventStartsAt}
-                  onChange={(event) =>
-                    setTimeline((current) => ({ ...current, eventStartsAt: event.target.value }))
-                  }
-                />
-              </Field>
-              <Field label="Event ends">
-                <TextInput
-                  type="datetime-local"
-                  value={timeline.eventEndsAt}
-                  onChange={(event) =>
-                    setTimeline((current) => ({ ...current, eventEndsAt: event.target.value }))
-                  }
-                />
-              </Field>
-              <div className="timezone-note full-field">
-                <span>TIMEZONE</span>
-                <strong>Asia/Kolkata · IST</strong>
-                <p>Times are entered in IST and stored in UTC.</p>
-              </div>
-            </div>
-          ) : null}
+      <Pane title={eventSteps[step] ?? eventSteps[0]} meta={step === 1 ? "IST" : undefined} active>
+        {step === 0 ? (
+          <div className="grid items-start gap-4 sm:grid-cols-2">
+            <Field label="Event name" required>
+              <TextInput
+                value={name}
+                onChange={(event) => {
+                  setName(event.target.value);
+                  if (!slug) setSlug(slugify(event.target.value));
+                }}
+                placeholder="HackSVNIT 2026"
+                maxLength={80}
+              />
+            </Field>
+            <Field label="Public link" hint={slug ? `/h/${slug}` : "a-z, 0-9, -"} required>
+              <TextInput
+                value={slug}
+                onChange={(event) => setSlug(slugify(event.target.value))}
+                placeholder="hacksvnit-2026"
+                maxLength={40}
+              />
+            </Field>
+            <Field label="Tagline" className="sm:col-span-2" required>
+              <TextInput
+                value={tagline}
+                onChange={(event) => setTagline(event.target.value)}
+                placeholder="36 hours. Build for Gujarat's farmers."
+                maxLength={140}
+              />
+            </Field>
+            <Field label="Description" hint="Markdown" className="sm:col-span-2" required>
+              <TextArea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                rows={5}
+                placeholder="Rules, prizes, themes and schedule"
+                maxLength={5000}
+              />
+            </Field>
+            <Field label="Mode">
+              <SelectInput
+                value={mode}
+                onChange={(event) => setMode(event.target.value as CreateEventInput["mode"])}
+              >
+                <option value="in_person">In person</option>
+                <option value="online">Online</option>
+                <option value="hybrid">Hybrid</option>
+              </SelectInput>
+            </Field>
+            <Field label="Venue" required={mode !== "online"}>
+              <TextInput
+                value={venue}
+                onChange={(event) => setVenue(event.target.value)}
+                placeholder="SVNIT Surat, CSE block"
+                disabled={mode === "online"}
+              />
+            </Field>
 
-          {step === 2 ? (
-            <div className="form-grid">
-              <Field label="Minimum team size">
-                <TextInput
-                  type="number"
-                  min="1"
-                  max="6"
-                  value={minimumTeamSize}
-                  onChange={(event) => setMinimumTeamSize(Number(event.target.value))}
-                />
-              </Field>
-              <Field label="Maximum team size">
-                <TextInput
-                  type="number"
-                  min="1"
-                  max="6"
-                  value={maximumTeamSize}
-                  onChange={(event) => setMaximumTeamSize(Number(event.target.value))}
-                />
-              </Field>
-              <Field label="Participant capacity" hint="Seats to fill, not expected sign-ups.">
-                <TextInput
-                  type="number"
-                  min="1"
-                  max="5000"
-                  value={capacity}
-                  onChange={(event) => setCapacity(Number(event.target.value))}
-                />
-              </Field>
-              <Field label="CV requirement">
-                <SelectInput defaultValue="required">
-                  <option value="required">Required</option>
-                  <option value="optional">Optional</option>
-                </SelectInput>
-              </Field>
-              <div className="rule-explainer full-field">
-                <span>TEAM RULES</span>
-                <p>
-                  A minimum of one enables solo applications. Team size is checked on submit, and
-                  every team locks when registration closes.
-                </p>
-              </div>
-            </div>
-          ) : null}
-
-          {step === 3 ? (
-            <div className="requirements-builder">
-              <div className="requirement-adder">
-                <Field label="Search taxonomy">
-                  <SelectInput
-                    value={requirementSkill}
-                    onChange={(event) => setRequirementSkill(event.target.value)}
-                  >
-                    <option value="">Select a technology or skill</option>
-                    {technologyOptions.map((item) => (
-                      <option value={item.id} key={item.id}>
-                        {item.label}
-                      </option>
-                    ))}
-                  </SelectInput>
-                </Field>
-                <ActionButton onClick={addRequirement} disabled={!requirementSkill}>
-                  Add requirement
-                </ActionButton>
-              </div>
-              {requirements.length === 0 ? (
-                <EmptyState title="No requirements added">
-                  Add the capabilities this event needs. Each requirement gets a target level and
-                  decision weight.
-                </EmptyState>
-              ) : (
-                <div className="requirement-editor">
-                  <div className="requirement-head">
-                    <span>SKILL</span>
-                    <span>TARGET</span>
-                    <span>WEIGHT</span>
-                    <span />
-                  </div>
-                  {requirements.map((requirement) => {
-                    const label =
-                      taxonomy.technologies[requirement.skill]?.label ?? requirement.skill;
-                    return (
-                      <div className="requirement-edit-row" key={requirement.id}>
-                        <strong>{label}</strong>
-                        <label>
-                          <span>{requirement.target.toFixed(1)}</span>
-                          <input
-                            type="range"
-                            min="1"
-                            max="5"
-                            step="0.5"
-                            value={requirement.target}
-                            onChange={(event) =>
-                              updateRequirement(
-                                requirement.id,
-                                "target",
-                                Number(event.target.value),
-                              )
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span>{requirement.weight}</span>
-                          <input
-                            type="range"
-                            min="0"
-                            max="5"
-                            step="1"
-                            value={requirement.weight}
-                            onChange={(event) =>
-                              updateRequirement(
-                                requirement.id,
-                                "weight",
-                                Number(event.target.value),
-                              )
-                            }
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRequirements((current) =>
-                              current.filter((item) => item.id !== requirement.id),
-                            )
-                          }
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              <div className="builder-sections">
-                <section className="wizard-rule-builder">
-                  <div>
-                    <span>QUOTAS</span>
-                    <Badge tone="neutral">{quotas.length} rules</Badge>
-                  </div>
-                  <p>
-                    Build auditable rules from attribute, operator, value, minimum share, unit and
-                    match mode.
-                  </p>
-                  <div className="wizard-quota-fields">
-                    <Field label="Attribute">
-                      <SelectInput
-                        value={quotaDraft.attribute}
-                        onChange={(event) =>
-                          setQuotaDraft((current) => ({
-                            ...current,
-                            attribute: event.target.value as QuotaRule["attribute"],
-                          }))
-                        }
-                      >
-                        <option value="college">College</option>
-                        <option value="year_of_study">Year of study</option>
-                        <option value="branch">Branch</option>
-                        <option value="city">City</option>
-                      </SelectInput>
+            <div className="pt-2 sm:col-span-2">
+              <Details
+                summary="links and images"
+                {...(links.length ? { meta: plural(links.length, "link") } : {})}
+              >
+                <div className="grid gap-4">
+                  <div className="grid items-start gap-4 sm:grid-cols-2">
+                    <Field label="Logo URL">
+                      <TextInput
+                        value={logoUrl}
+                        onChange={(event) => setLogoUrl(event.target.value)}
+                        type="url"
+                        placeholder="https://…"
+                      />
                     </Field>
-                    <Field label="Operator">
-                      <SelectInput
-                        value={quotaDraft.op}
-                        onChange={(event) =>
-                          setQuotaDraft((current) => ({
-                            ...current,
-                            op: event.target.value as QuotaRule["op"],
-                          }))
-                        }
-                      >
-                        <option value="equals">Equals</option>
-                        <option value="not_equals">Does not equal</option>
-                        <option value="in">In list</option>
-                        <option value="not_in">Not in list</option>
-                      </SelectInput>
+                    <Field label="Banner URL">
+                      <TextInput
+                        value={bannerUrl}
+                        onChange={(event) => setBannerUrl(event.target.value)}
+                        type="url"
+                        placeholder="https://…"
+                      />
                     </Field>
-                    <Field
-                      label="Value"
-                      {...(quotaDraft.op === "in" || quotaDraft.op === "not_in"
-                        ? { hint: "Comma-separated values" }
-                        : {})}
+                  </div>
+                  {links.length ? (
+                    <ul className="grid gap-1">
+                      {links.map((link) => (
+                        <li
+                          className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-2"
+                          key={`${link.label}-${link.url}`}
+                        >
+                          <span className="truncate">
+                            {link.label} <span className="dim">{link.url}</span>
+                          </span>
+                          <TextAction
+                            tone="danger"
+                            aria-label={`Remove ${link.label}`}
+                            onClick={() =>
+                              setLinks((current) => current.filter((other) => other !== link))
+                            }
+                          >
+                            remove
+                          </TextAction>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_auto]">
+                    <TextInput
+                      aria-label="Link label"
+                      placeholder="Discord"
+                      value={linkDraft.label}
+                      onChange={(event) =>
+                        setLinkDraft((current) => ({ ...current, label: event.target.value }))
+                      }
+                    />
+                    <TextInput
+                      aria-label="Link URL"
+                      type="url"
+                      placeholder="https://…"
+                      value={linkDraft.url}
+                      onChange={(event) =>
+                        setLinkDraft((current) => ({ ...current, url: event.target.value }))
+                      }
+                    />
+                    <ActionButton
+                      className="min-h-9!"
+                      disabled={
+                        !linkDraft.label.trim() ||
+                        !URL.canParse(linkDraft.url.trim()) ||
+                        links.length >= 12
+                      }
+                      onClick={addLink}
                     >
-                      <TextInput
-                        value={quotaDraft.value}
-                        onChange={(event) =>
-                          setQuotaDraft((current) => ({ ...current, value: event.target.value }))
-                        }
-                      />
-                    </Field>
-                    <Field label="Minimum share">
-                      <TextInput
-                        type="number"
-                        min="0.01"
-                        max="1"
-                        step="0.01"
-                        value={quotaDraft.minShare}
-                        onChange={(event) =>
-                          setQuotaDraft((current) => ({
-                            ...current,
-                            minShare: Number(event.target.value),
-                          }))
-                        }
-                      />
-                    </Field>
-                    <Field label="Unit">
-                      <SelectInput
-                        value={quotaDraft.unit}
-                        onChange={(event) =>
-                          setQuotaDraft((current) => ({
-                            ...current,
-                            unit: event.target.value as QuotaRule["unit"],
-                          }))
-                        }
-                      >
-                        <option value="teams">Teams</option>
-                        <option value="participants">Participants</option>
-                      </SelectInput>
-                    </Field>
-                    <Field label="Team match">
-                      <SelectInput
-                        value={quotaDraft.match}
-                        disabled={quotaDraft.unit === "participants"}
-                        onChange={(event) =>
-                          setQuotaDraft((current) => ({
-                            ...current,
-                            match: event.target.value as NonNullable<QuotaRule["match"]>,
-                          }))
-                        }
-                      >
-                        <option value="all">All members</option>
-                        <option value="majority">Majority</option>
-                        <option value="any">Any member</option>
-                      </SelectInput>
-                    </Field>
+                      Add link
+                    </ActionButton>
                   </div>
-                  <ActionButton
-                    tone="secondary"
-                    disabled={
-                      !quotaDraft.value.trim() ||
-                      quotaDraft.minShare < 0.01 ||
-                      quotaDraft.minShare > 1 ||
-                      quotas.length >= 20
-                    }
-                    onClick={addQuota}
-                  >
-                    Add quota rule
-                  </ActionButton>
-                  {quotas.length ? (
-                    <div className="draft-item-list">
-                      {quotas.map((quota) => (
-                        <div key={JSON.stringify(quota)}>
-                          <span>
-                            <strong>
-                              {quota.attribute.replaceAll("_", " ")} {quota.op.replaceAll("_", " ")}{" "}
-                              {Array.isArray(quota.value) ? quota.value.join(", ") : quota.value}
-                            </strong>
-                            <small>
-                              {Math.round(quota.minShare * 100)}% of {quota.unit}
-                              {quota.unit === "teams" ? ` · ${quota.match}` : ""}
-                            </small>
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setQuotas((current) =>
-                                current.filter((candidate) => candidate !== quota),
-                              )
-                            }
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </section>
-                <section className="wizard-rule-builder">
-                  <div>
-                    <span>COLLEGE ALIASES</span>
-                    <Badge tone="neutral">{Object.keys(collegeAliases).length} mappings</Badge>
-                  </div>
-                  <p>Normalize institution names before a college-based quota can be trusted.</p>
-                  <div className="wizard-alias-fields">
-                    <Field label="Canonical college">
-                      <TextInput
-                        value={aliasDraft.canonical}
-                        onChange={(event) =>
-                          setAliasDraft((current) => ({
-                            ...current,
-                            canonical: event.target.value,
-                          }))
-                        }
-                      />
-                    </Field>
-                    <Field label="Aliases" hint="Comma-separated names">
-                      <TextInput
-                        value={aliasDraft.aliases}
-                        onChange={(event) =>
-                          setAliasDraft((current) => ({
-                            ...current,
-                            aliases: event.target.value,
-                          }))
-                        }
-                      />
-                    </Field>
-                  </div>
-                  <ActionButton
-                    tone="secondary"
-                    disabled={!aliasDraft.canonical.trim() || !aliasDraft.aliases.trim()}
-                    onClick={addAlias}
-                  >
-                    Add alias mapping
-                  </ActionButton>
-                  {Object.entries(collegeAliases).length ? (
-                    <div className="draft-item-list">
-                      {Object.entries(collegeAliases).map(([canonical, aliases]) => (
-                        <div key={canonical}>
-                          <span>
-                            <strong>{canonical}</strong>
-                            <small>{aliases.join(" · ")}</small>
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setCollegeAliases((current) => {
-                                const next = { ...current };
-                                delete next[canonical];
-                                return next;
-                              })
-                            }
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="rule-explainer">
-                    <span>VISIBILITY · DRAFT</span>
-                    <p>
-                      New events stay private until you review the public page and publish them.
-                    </p>
-                  </div>
-                </section>
-              </div>
+                </div>
+              </Details>
             </div>
-          ) : null}
-
-          <div className="wizard-actions">
-            <ActionButton
-              tone="quiet"
-              disabled={step === 0}
-              onClick={() => setStep((value) => Math.max(0, value - 1))}
-            >
-              Back
-            </ActionButton>
-            {step < eventSteps.length - 1 ? (
-              <ActionButton
-                disabled={!stepValid[step]}
-                onClick={() => setStep((value) => Math.min(eventSteps.length - 1, value + 1))}
-              >
-                Continue
-              </ActionButton>
-            ) : (
-              <ActionButton
-                disabled={!stepValid.every(Boolean) || createEvent.isPending}
-                onClick={submit}
-              >
-                {createEvent.isPending ? "Creating…" : "Create draft"}
-              </ActionButton>
-            )}
           </div>
-          {createEvent.isError ? (
-            <div className="error-state" role="alert">
-              {createEvent.error.message}
-            </div>
+        ) : null}
+
+        {step === 1 ? (
+          <TimelineFields
+            value={timeline}
+            onChange={(key, value) => setTimeline((current) => ({ ...current, [key]: value }))}
+          />
+        ) : null}
+
+        {step === 2 ? (
+          <TeamSizeFields
+            min={minimumTeamSize}
+            max={maximumTeamSize}
+            capacity={capacity}
+            onMin={setMinimumTeamSize}
+            onMax={setMaximumTeamSize}
+            onCapacity={setCapacity}
+          />
+        ) : null}
+
+        {step === 3 ? (
+          <RequirementsEditor value={requirements} onChange={setRequirements} kind="area" />
+        ) : null}
+        {step === 4 ? (
+          <RequirementsEditor value={requirements} onChange={setRequirements} kind="tool" />
+        ) : null}
+        {step === 5 ? (
+          <div className="grid gap-10">
+            <QuotaBuilder value={quotas} onChange={setQuotas} />
+            <FormSection title="college aliases" meta={String(Object.keys(collegeAliases).length)}>
+              <AliasEditor value={collegeAliases} onChange={setCollegeAliases} />
+            </FormSection>
+          </div>
+        ) : null}
+      </Pane>
+
+      <div className="grid gap-3">
+        <WizardFooter
+          {...(step > 0 ? { onBack: () => setStep((value) => Math.max(0, value - 1)) } : {})}
+          missing={missing ?? null}
+        >
+          {savedAt && !unsaved ? (
+            <span className="dim">saved {logTime.format(savedAt)}</span>
           ) : null}
-        </Panel>
-        <aside className="wizard-aside">
-          <Panel label="PUBLIC / PREVIEW" title={name || "Untitled event"}>
-            <p className="preview-slug">/h/{slug || "event-slug"}</p>
-            <Badge tone="warning">Draft</Badge>
-            <p className="prose-copy">
-              The stable public page reflects the current event status, requirements, timeline, and
-              countdown.
-            </p>
-          </Panel>
-          <Panel label="SETUP / REQUIRED" title="Publish checklist">
-            <ul className="check-list">
-              <li className={name ? "done" : ""}>Event name</li>
-              <li className={slug ? "done" : ""}>Unique public slug</li>
-              <li>Valid timeline</li>
-              <li>At least one requirement</li>
-              <li>Organizer account</li>
-            </ul>
-          </Panel>
-        </aside>
+          {step < eventSteps.length - 1 ? (
+            <ActionButton
+              tone="primary"
+              disabled={!stepValidity[step] || saveStep.isPending}
+              onClick={() => void advance()}
+            >
+              {saveStep.isPending ? "Saving…" : "Continue"}
+            </ActionButton>
+          ) : (
+            <ActionButton
+              tone="primary"
+              disabled={!stepValidity.every(Boolean) || saveStep.isPending}
+              onClick={() => void finish()}
+            >
+              {saveStep.isPending ? "Saving…" : "Save draft"}
+            </ActionButton>
+          )}
+        </WizardFooter>
+        {saveStep.isError ? <ErrorState message={saveStep.error.message} /> : null}
       </div>
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ quick shortlist */
+
+function FileInput({
+  accept,
+  onFile,
+  ...props
+}: {
+  accept: string;
+  onFile: (file: File | null) => void;
+  id?: string;
+  required?: boolean;
+  "aria-describedby"?: string;
+}) {
+  return (
+    <input
+      {...props}
+      type="file"
+      accept={accept}
+      className="block w-full min-w-0 cursor-pointer border border-dim p-1 file:mr-3 file:cursor-pointer file:border file:border-current file:bg-transparent file:px-2 file:py-0.5 file:text-accent hover:file:bg-accent hover:file:text-bg"
+      onChange={(event) => onFile(event.target.files?.[0] ?? null)}
+    />
   );
 }
 
 export function QuickShortlistPage() {
   const { quickId } = useParams();
   const navigate = useNavigate();
+  const { post } = useStatusLine();
+  const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
   const [step, setStep] = useState(quickId ? 1 : 0);
   const [consent, setConsent] = useState(false);
   const [name, setName] = useState("");
@@ -1043,8 +1292,7 @@ export function QuickShortlistPage() {
   const [headers, setHeaders] = useState<string[]>([]);
   const [rowCount, setRowCount] = useState(0);
   const [mapping, setMapping] = useState<QuickMapping>({});
-  const [requirements, setRequirements] = useState<RequirementDraft[]>([]);
-  const [requirementSkill, setRequirementSkill] = useState("");
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
   const status = useQuery({
     queryKey: ["quick-import", activeQuickId],
     queryFn: () => getQuickImport(activeQuickId ?? ""),
@@ -1103,25 +1351,6 @@ export function QuickShortlistPage() {
     },
   });
 
-  const addRequirement = () => {
-    if (
-      !requirementSkill ||
-      requirements.some((requirement) => requirement.skill === requirementSkill)
-    )
-      return;
-    setRequirements((current) => [
-      ...current,
-      { id: Date.now(), skill: requirementSkill, target: 3, weight: 3 },
-    ]);
-    setRequirementSkill("");
-  };
-  const updateRequirement = (id: number, field: "target" | "weight", value: number) => {
-    setRequirements((current) =>
-      current.map((requirement) =>
-        requirement.id === id ? { ...requirement, [field]: value } : requirement,
-      ),
-    );
-  };
   const requiredMappingReady = Boolean(mapping.name && mapping.email);
   const stepReady = [
     name.trim().length >= 3 &&
@@ -1133,375 +1362,373 @@ export function QuickShortlistPage() {
     consent,
     status.data?.status === "ready",
   ];
+  const missing = [
+    firstMissing([
+      [name.trim().length >= 3, "add a name"],
+      [Boolean(csvFile), "choose a CSV"],
+      [requirements.length > 0, "add a skill"],
+      [minimumTeamSize <= maximumTeamSize && capacity > 0, "fix team size"],
+      [Boolean(account.data) || account.isPending, "sign in first"],
+    ]),
+    firstMissing([
+      [Boolean(mapping.name), "map the name column"],
+      [Boolean(mapping.email), "map the email column"],
+    ]),
+    consent ? null : "confirm consent",
+    null,
+  ][step];
+  const progress = status.data?.progress;
+  const failures = status.data?.failures ?? [];
+  const buildLog = status.data?.recentEvents ?? [];
+  const error = prepareImport.error ?? startImport.error ?? status.error;
 
   return (
-    <div className="portal-page wizard-page">
-      <PageHeading
-        eyebrow="ORGANIZER / QUICK SHORTLIST"
-        title="Import existing registrations"
-        description="Bring a CSV into the full evidence, ranking, explanation, and export workflow."
-      />
-      <StepRail steps={quickSteps} current={step} />
-      <div className="wizard-layout">
-        <Panel
-          label={`STEP ${step + 1} / ${quickSteps.length}`}
-          title={quickSteps[step] ?? quickSteps[0]}
-          className="wizard-main"
-        >
-          {step === 0 ? (
-            <div className="quick-upload-step">
-              <div className="form-grid">
-                <Field label="Workspace name" className="full-field">
-                  <TextInput
-                    value={name}
-                    maxLength={80}
-                    placeholder="e.g. Winter hackathon registrations"
-                    onChange={(event) => setName(event.target.value)}
-                  />
-                </Field>
-                <Field label="Minimum team size">
-                  <TextInput
-                    type="number"
-                    min="1"
-                    max="6"
-                    value={minimumTeamSize}
-                    onChange={(event) => setMinimumTeamSize(Number(event.target.value))}
-                  />
-                </Field>
-                <Field label="Maximum team size">
-                  <TextInput
-                    type="number"
-                    min="1"
-                    max="6"
-                    value={maximumTeamSize}
-                    onChange={(event) => setMaximumTeamSize(Number(event.target.value))}
-                  />
-                </Field>
-                <Field label="Participant capacity" className="full-field">
-                  <TextInput
-                    type="number"
-                    min="1"
-                    max="5000"
-                    value={capacity}
-                    onChange={(event) => setCapacity(Number(event.target.value))}
-                  />
+    <div className="mx-auto grid max-w-2xl gap-10">
+      <div className="grid gap-6">
+        <ScreenHead title="Quick shortlist" />
+        <Steps
+          steps={quickSteps}
+          current={step}
+          onSelect={(index) => {
+            if (index < step && step !== 3) setStep(index);
+          }}
+        />
+      </div>
+
+      <Pane
+        title={quickSteps[step] ?? quickSteps[0]}
+        meta={
+          step === 3 && status.data ? (
+            <StateTag state={status.data.status} />
+          ) : step === 1 ? (
+            plural(rowCount, "row")
+          ) : undefined
+        }
+        active
+      >
+        {step === 0 ? (
+          <div className="grid gap-6">
+            <div className="grid items-start gap-4 sm:grid-cols-2">
+              <Field label="Name" required>
+                <TextInput
+                  value={name}
+                  maxLength={80}
+                  placeholder="Winter hackathon"
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </Field>
+              <Field
+                label="Responses CSV"
+                hint={csvFile ? csvFile.name : "max 2,000 rows"}
+                required
+              >
+                <FileInput accept=".csv,text/csv" onFile={setCsvFile} />
+              </Field>
+            </div>
+            <FormSection title="areas">
+              <RequirementsEditor value={requirements} onChange={setRequirements} kind="area" />
+            </FormSection>
+            <FormSection title="tools">
+              <RequirementsEditor value={requirements} onChange={setRequirements} kind="tool" />
+            </FormSection>
+            <Details
+              summary="options"
+              meta={`teams ${minimumTeamSize}–${maximumTeamSize} · ${capacity} seats`}
+            >
+              <div className="grid gap-4">
+                <TeamSizeFields
+                  min={minimumTeamSize}
+                  max={maximumTeamSize}
+                  capacity={capacity}
+                  onMin={setMinimumTeamSize}
+                  onMax={setMaximumTeamSize}
+                  onCapacity={setCapacity}
+                />
+                <Field label="CV archive" hint={archiveFile ? archiveFile.name : "zip, max 200 MB"}>
+                  <FileInput accept=".zip,application/zip" onFile={setArchiveFile} />
                 </Field>
               </div>
-              <div className="upload-pair">
-                <div className="upload-zone">
-                  <span aria-hidden="true">CSV</span>
-                  <h3>{csvFile?.name ?? "Registration responses"}</h3>
-                  <p>UTF-8 CSV with a header row, up to 2,000 records.</p>
-                  <input
-                    id="quick-csv"
-                    type="file"
-                    accept=".csv,text/csv"
-                    onChange={(event) => setCsvFile(event.target.files?.[0] ?? null)}
-                  />
-                  <label className="btn terminal-action action-secondary" htmlFor="quick-csv">
-                    [ Choose CSV ]
-                  </label>
-                </div>
-                <div className="upload-zone optional">
-                  <span aria-hidden="true">ZIP</span>
-                  <h3>{archiveFile?.name ?? "CV archive"}</h3>
-                  <p>
-                    Optional ZIP of PDFs, up to 200 MB. Useful for private Google Forms uploads.
-                  </p>
-                  <input
-                    id="quick-zip"
-                    type="file"
-                    accept=".zip,application/zip"
-                    onChange={(event) => setArchiveFile(event.target.files?.[0] ?? null)}
-                  />
-                  <label className="btn terminal-action action-secondary" htmlFor="quick-zip">
-                    [ Choose ZIP ]
-                  </label>
-                </div>
-              </div>
-              <div className="requirements-builder quick-requirements">
-                <div className="requirement-adder">
-                  <Field label="Scoring requirement">
-                    <SelectInput
-                      value={requirementSkill}
-                      onChange={(event) => setRequirementSkill(event.target.value)}
-                    >
-                      <option value="">Select a domain or technology</option>
-                      {technologyOptions.map((option) => (
-                        <option value={option.id} key={option.id}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </SelectInput>
-                  </Field>
-                  <ActionButton disabled={!requirementSkill} onClick={addRequirement}>
-                    Add requirement
-                  </ActionButton>
-                </div>
-                {requirements.length ? (
-                  <div className="requirement-editor">
-                    {requirements.map((requirement) => (
-                      <div className="requirement-edit-row" key={requirement.id}>
-                        <strong>
-                          {taxonomy.technologies[requirement.skill]?.label ??
-                            taxonomy.domains[requirement.skill]?.label ??
-                            requirement.skill}
-                        </strong>
-                        <label>
-                          <span>{requirement.target.toFixed(1)}</span>
-                          <input
-                            type="range"
-                            min="1"
-                            max="5"
-                            step="0.5"
-                            value={requirement.target}
-                            onChange={(event) =>
-                              updateRequirement(
-                                requirement.id,
-                                "target",
-                                Number(event.target.value),
-                              )
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span>{requirement.weight}</span>
-                          <input
-                            type="range"
-                            min="0"
-                            max="5"
-                            step="1"
-                            value={requirement.weight}
-                            onChange={(event) =>
-                              updateRequirement(
-                                requirement.id,
-                                "weight",
-                                Number(event.target.value),
-                              )
-                            }
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRequirements((current) =>
-                              current.filter((candidate) => candidate.id !== requirement.id),
-                            )
-                          }
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
+            </Details>
+          </div>
+        ) : null}
+
+        {step === 1 ? (
+          <div className="table-scroll -mx-6">
+            <table className="tui-table cards">
+              <caption className="sr-only">Map CSV columns to TalentRadar fields</caption>
+              <thead>
+                <tr>
+                  <th scope="col">field</th>
+                  <th scope="col">CSV column</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quickMappingFields.map((field) => (
+                  <tr key={field.key}>
+                    <th scope="row" data-label="field" className="font-bold align-middle">
+                      {field.label}
+                      {field.required ? <RequiredMark /> : null}
+                    </th>
+                    <td data-label="column" className="w-full">
+                      <SelectInput
+                        aria-label={`${field.label} column`}
+                        value={mapping[field.key] ?? ""}
+                        onChange={(event) =>
+                          setMapping((current) => ({
+                            ...current,
+                            [field.key]: event.target.value || undefined,
+                          }))
+                        }
+                      >
+                        <option value="">Not mapped</option>
+                        {headers.map((header) => (
+                          <option value={header} key={header}>
+                            {header}
+                          </option>
+                        ))}
+                      </SelectInput>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+
+        {step === 2 ? (
+          <CheckRow checked={consent} onChange={setConsent} required>
+            Registrants agreed to automated evaluation of their GitHub and CV.
+          </CheckRow>
+        ) : null}
+
+        {step === 3 ? (
+          <div className="grid gap-8">
+            <div className="flex flex-wrap gap-x-10 gap-y-6 sm:gap-x-16">
+              <Stat
+                value={`${progress?.ready ?? 0}/${progress?.total ?? 0}`}
+                label="profiles ready"
+              />
+              <Stat value={progress?.pending ?? 0} label="building" />
+              {progress?.failed ? (
+                <Stat value={progress.failed} label="failed" tone="warn" />
+              ) : null}
+            </div>
+            <div className="grid gap-3">
+              <Details summary="build log" meta={plural(buildLog.length, "event")}>
+                {buildLog.length ? (
+                  <div className="[&_pre]:w-auto! [&_pre]:break-words">
+                    <LogView
+                      live={status.data?.status === "profiling"}
+                      lines={buildLog.map((event) => ({
+                        key: `${event.at}-${event.message}`,
+                        text: `${logTime.format(new Date(event.at))}  ${event.message}`,
+                      }))}
+                    />
                   </div>
                 ) : (
-                  <p className="muted-copy">
-                    Add at least one capability the teams will be ranked against.
-                  </p>
+                  <p className="dim">No events yet.</p>
                 )}
-              </div>
-            </div>
-          ) : null}
-          {step === 1 ? (
-            <div>
-              <div className="context-notice compact">
-                <span aria-hidden="true">i</span>
-                <p>
-                  Column headers are detected after a CSV is selected. Confirm every required
-                  mapping before import. {rowCount} rows were parsed from the uploaded file.
-                </p>
-              </div>
-              <div className="mapping-table">
-                <div>
-                  <span>TALENTRADAR FIELD</span>
-                  <span>CSV COLUMN</span>
-                  <span>REQUIRED</span>
-                </div>
-                {quickMappingFields.map((field) => (
-                  <div key={field.key}>
-                    <strong>{field.label}</strong>
-                    <SelectInput
-                      aria-label={`${field.label} column`}
-                      value={mapping[field.key] ?? ""}
-                      onChange={(event) =>
-                        setMapping((current) => ({
-                          ...current,
-                          [field.key]: event.target.value || undefined,
-                        }))
-                      }
-                    >
-                      <option value="">Not mapped</option>
-                      {headers.map((header) => (
-                        <option value={header} key={header}>
-                          {header}
-                        </option>
-                      ))}
-                    </SelectInput>
-                    <Badge tone={field.required ? "warning" : "neutral"}>
-                      {field.required ? "Yes" : "No"}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {step === 2 ? (
-            <div className="consent-copy">
-              <h3>Confirm registrant notice</h3>
-              <p>
-                People imported from a form did not consent inside TalentRadar. The organizer must
-                confirm they were told that GitHub and CV data would be evaluated automatically.
-              </p>
-              <label className="terminal-check">
-                <input
-                  type="checkbox"
-                  checked={consent}
-                  onChange={(event) => setConsent(event.target.checked)}
-                />
-                <span>
-                  I confirm every imported registrant received this notice before their data was
-                  collected.
-                </span>
-              </label>
-              <div className="warning-block">
-                <strong>Organizer responsibility</strong>
-                <p>
-                  Do not continue if the original form omitted this disclosure. Add consent and
-                  collect responses again.
-                </p>
-              </div>
-            </div>
-          ) : null}
-          {step === 3 ? (
-            <div className="quick-progress">
-              <div className="metric-strip">
-                <div>
-                  <span>TOTAL</span>
-                  <strong>{status.data?.progress.total ?? 0}</strong>
-                  <small>Profiles created</small>
-                </div>
-                <div>
-                  <span>READY</span>
-                  <strong>{status.data?.progress.ready ?? 0}</strong>
-                  <small>Evidence complete</small>
-                </div>
-                <div>
-                  <span>PROCESSING</span>
-                  <strong>{status.data?.progress.pending ?? 0}</strong>
-                  <small>Queued or running</small>
-                </div>
-                <div>
-                  <span>FAILED</span>
-                  <strong>{status.data?.progress.failed ?? 0}</strong>
-                  <small>Needs review</small>
-                </div>
-              </div>
-              <ProgressBar
-                label="Profile completion"
-                value={
-                  status.data?.progress.total
-                    ? ((status.data.progress.ready + status.data.progress.failed) /
-                        status.data.progress.total) *
-                      100
-                    : 0
-                }
-              />
-              {status.data?.recentEvents.length ? (
-                <div className="mockup-code real-build-log">
-                  {status.data.recentEvents.map((event, index) => (
-                    <pre
-                      data-prefix={String(index + 1).padStart(2, "0")}
-                      key={`${event.at}-${event.message}`}
-                    >
-                      <code>{event.message}</code>
-                    </pre>
-                  ))}
-                </div>
-              ) : (
-                <p className="muted-copy">No worker events have been persisted yet.</p>
-              )}
-              {status.data?.failures.length ? (
-                <div className="quick-failures">
-                  {status.data.failures.map((failure) => (
-                    <p key={failure.personId}>
-                      <strong>{failure.name}</strong>
-                      <span>{failure.error}</span>
-                    </p>
-                  ))}
-                </div>
-              ) : null}
-              {status.data?.status === "ready" && activeQuickId ? (
-                <ActionLink to={`/organizer/events/${activeQuickId}/shortlist`}>
-                  Open ranked shortlist
-                </ActionLink>
+              </Details>
+              {failures.length ? (
+                <Details summary="failed profiles" meta={failures.length}>
+                  <ul className="grid gap-1">
+                    {failures.map((failure) => (
+                      <li key={failure.personId}>
+                        <span className="font-bold">{failure.name}</span>{" "}
+                        <span className="text-error">{failure.error}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </Details>
               ) : null}
             </div>
-          ) : null}
-          <div className="wizard-actions">
-            <ActionButton
-              tone="quiet"
-              disabled={step === 0 || step === 3}
-              onClick={() => setStep((value) => Math.max(0, value - 1))}
-            >
-              Back
-            </ActionButton>
+          </div>
+        ) : null}
+      </Pane>
+
+      <div className="grid gap-3">
+        {step < 3 ? (
+          <WizardFooter
+            {...(step > 0 ? { onBack: () => setStep((value) => Math.max(0, value - 1)) } : {})}
+            missing={missing ?? null}
+          >
             {step === 0 ? (
               <ActionButton
+                tone="primary"
                 disabled={!stepReady[0] || prepareImport.isPending}
                 onClick={() => prepareImport.mutate()}
               >
-                {prepareImport.isPending ? "Uploading…" : "Upload and inspect"}
+                {prepareImport.isPending ? "Uploading…" : "Upload CSV"}
               </ActionButton>
             ) : null}
             {step === 1 ? (
-              <ActionButton disabled={!stepReady[1]} onClick={() => setStep(2)}>
-                Confirm mapping
+              <ActionButton tone="primary" disabled={!stepReady[1]} onClick={() => setStep(2)}>
+                Continue
               </ActionButton>
             ) : null}
             {step === 2 ? (
               <ActionButton
+                tone="primary"
                 disabled={!stepReady[2] || startImport.isPending}
-                onClick={() => startImport.mutate()}
+                onClick={() =>
+                  startImport.mutate(undefined, { onSuccess: () => post("Profiling started.") })
+                }
               >
                 {startImport.isPending ? "Starting…" : "Start profiling"}
               </ActionButton>
             ) : null}
-          </div>
-          {prepareImport.isError || startImport.isError || status.isError ? (
-            <div className="error-state" role="alert">
-              {(prepareImport.error ?? startImport.error ?? status.error)?.message}
+          </WizardFooter>
+        ) : status.data?.status === "ready" && activeQuickId ? (
+          <>
+            <div className="flex justify-end">
+              <ActionLink to={`/organizer/events/${activeQuickId}/shortlist`} tone="primary">
+                Open shortlist
+              </ActionLink>
             </div>
-          ) : null}
-        </Panel>
-        <aside className="wizard-aside">
-          <Panel label="IMPORT / LIMITS" title="Accepted inputs">
-            <dl className="compact-definition-list">
-              <div>
-                <dt>CSV</dt>
-                <dd>UTF-8 · 2,000 rows</dd>
-              </div>
-              <div>
-                <dt>CV archive</dt>
-                <dd>ZIP · 200 MB</dd>
-              </div>
-              <div>
-                <dt>Repositories</dt>
-                <dd>6 recent non-forks</dd>
-              </div>
-              <div>
-                <dt>GitHub identity</dt>
-                <dd>Unverified</dd>
-              </div>
-            </dl>
-          </Panel>
-          <Panel label="GOOGLE FORMS / CV" title="Why the ZIP matters">
-            <p className="prose-copy">
-              Google Forms upload links usually require the form owner's Drive session. Attach the
-              downloaded upload folder so files can be matched locally by filename or email.
-            </p>
-          </Panel>
-        </aside>
+            <PromoteQuickForm quickId={activeQuickId} name={status.data.name} />
+          </>
+        ) : null}
+        {error ? <ErrorState message={error.message} /> : null}
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ event overview */
+
+const auditLabel: Record<string, string> = {
+  "event.created": "created the draft",
+  "draft.saved": "saved",
+  "event.updated": "changed",
+  "event.published": "published",
+  "event.unpublished": "unpublished",
+  "run.saved": "saved a run",
+  "run.published": "published a run",
+  "override.added": "overrode",
+  "correction.resolved": "resolved a report",
+  "correction.dismissed": "dismissed a report",
+};
+
+const correctionReasonLabel: Record<OrganizerCorrection["reason"], string> = {
+  not_my_repo: "repo isn't theirs",
+  missing_repo: "repo missing",
+  level_off: "level seems off",
+};
+
+/** Newest first: who did what, when, and the field-level summary. */
+function ActivityLog({ eventId }: { eventId: string }) {
+  const audit = useQuery({
+    queryKey: ["organizer-event-audit", eventId],
+    queryFn: () => getOrganizerEventAudit(eventId),
+    retry: false,
+  });
+  return (
+    <Details summary="activity" meta={audit.data?.length ?? "…"}>
+      {audit.isError ? (
+        <ErrorState message={audit.error.message} retry={() => void audit.refetch()} />
+      ) : audit.data?.length === 0 ? (
+        <p className="dim">Nothing yet.</p>
+      ) : (
+        <ol className="grid gap-3">
+          {audit.data?.map((entry) => (
+            <li key={entry.id} className="grid">
+              <span>
+                <time className="dim" dateTime={entry.at}>
+                  {formatDateTime(entry.at)}
+                </time>{" "}
+                @{entry.actor} {auditLabel[entry.action] ?? entry.action}
+                {entry.action === "draft.saved" && entry.note ? ` ${entry.note}` : null}
+              </span>
+              {entry.changes.length ? (
+                <span className="dim wrap">{entry.changes.join(" · ")}</span>
+              ) : null}
+              {entry.note && entry.action !== "draft.saved" ? (
+                <span className="dim wrap">“{entry.note}”</span>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      )}
+    </Details>
+  );
+}
+
+function useOpenCorrections(eventId: string | undefined) {
+  return useQuery({
+    queryKey: ["organizer-corrections", eventId],
+    queryFn: () => getOrganizerCorrections(eventId ?? ""),
+    enabled: Boolean(eventId),
+    retry: false,
+  });
+}
+
+/** One open report with an optional note and the two ways to close it. */
+function CorrectionRow({
+  eventId,
+  correction,
+}: {
+  eventId: string;
+  correction: OrganizerCorrection;
+}) {
+  const queryClient = useQueryClient();
+  const { post } = useStatusLine();
+  const [note, setNote] = useState("");
+  const resolve = useMutation({
+    mutationFn: (outcome: "resolved" | "dismissed") =>
+      resolveOrganizerCorrection(eventId, correction.id, {
+        outcome,
+        ...(note.trim() ? { note: note.trim() } : {}),
+      }),
+    onSuccess: async (_, outcome) => {
+      post(outcome === "resolved" ? "Report resolved." : "Report dismissed.");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["organizer-corrections", eventId] }),
+        queryClient.invalidateQueries({ queryKey: ["organizer-event-audit", eventId] }),
+      ]);
+    },
+  });
+  return (
+    <li className="grid gap-2">
+      <span className="wrap">
+        <span className="font-bold">{correction.name}</span>{" "}
+        <span className="dim">@{correction.github}</span> · {skillLabel(correction.skill)} ·{" "}
+        {correctionReasonLabel[correction.reason]}
+        <span className="dim"> · v{correction.profileVersion}</span>
+      </span>
+      {correction.note ? <span className="dim wrap">“{correction.note}”</span> : null}
+      <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3">
+        <TextInput
+          aria-label={`Note for ${correction.name}`}
+          placeholder="note"
+          value={note}
+          maxLength={500}
+          onChange={(event) => setNote(event.target.value)}
+        />
+        <TextAction disabled={resolve.isPending} onClick={() => resolve.mutate("dismissed")}>
+          dismiss
+        </TextAction>
+        <ActionButton
+          size="sm"
+          disabled={resolve.isPending}
+          onClick={() => resolve.mutate("resolved")}
+        >
+          Resolve
+        </ActionButton>
+      </div>
+      {resolve.isError ? <ErrorState message={resolve.error.message} /> : null}
+    </li>
+  );
+}
+
+function EventUnavailable({ message }: { message: string }) {
+  return (
+    <div className="mx-auto max-w-2xl pt-6">
+      <EmptyState
+        title="This event could not be opened"
+        action={<ActionLink to="/organizer">Back to events</ActionLink>}
+      >
+        {message}
+      </EmptyState>
     </div>
   );
 }
@@ -1509,6 +1736,7 @@ export function QuickShortlistPage() {
 export function EventOverviewPage() {
   const { eventId } = useParams();
   const queryClient = useQueryClient();
+  const { post } = useStatusLine();
   const event = useQuery({
     queryKey: ["organizer-event", eventId],
     queryFn: () => getOrganizerEvent(eventId ?? ""),
@@ -1521,146 +1749,203 @@ export function EventOverviewPage() {
     enabled: Boolean(eventId),
     retry: false,
   });
+  const corrections = useOpenCorrections(eventId);
+  const refreshVisibility = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["organizer-event", eventId] }),
+      queryClient.invalidateQueries({ queryKey: ["organizer-events"] }),
+      queryClient.invalidateQueries({ queryKey: ["public-events"] }),
+      queryClient.invalidateQueries({ queryKey: ["organizer-event-audit", eventId] }),
+    ]);
+  };
   const publish = useMutation({
     mutationFn: () => publishOrganizerEvent(eventId ?? ""),
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["organizer-event", eventId] }),
-        queryClient.invalidateQueries({ queryKey: ["organizer-events"] }),
-        queryClient.invalidateQueries({ queryKey: ["public-events"] }),
-      ]);
-    },
+    onSuccess: refreshVisibility,
+  });
+  const unpublish = useMutation({
+    mutationFn: () => unpublishOrganizerEvent(eventId ?? ""),
+    onSuccess: refreshVisibility,
   });
 
-  if (event.isPending) return <div className="loading-state">Loading event workspace…</div>;
-  if (event.isError) {
-    return (
-      <div className="portal-page">
-        <EmptyState
-          title="Event unavailable"
-          action={<ActionLink to="/organizer">Back to events</ActionLink>}
-        >
-          {event.error.message}
-        </EmptyState>
-      </div>
-    );
-  }
+  if (event.isPending) return <LoadingState label="opening event" />;
+  if (event.isError) return <EventUnavailable message={event.error.message} />;
+
+  const data = event.data;
+  const now = Date.now();
+  const participants = operations.data?.participants ?? [];
+  const draft = data.visibility === "draft";
+  const nextDeadline = timelineFields
+    .map(([key, label]) => ({ label, at: data.timeline?.[key] ?? "" }))
+    .find((item) => Date.parse(item.at) > now);
 
   return (
-    <div className="portal-page">
-      <PageHeading
-        eyebrow="ORGANIZER / EVENT"
-        title={event.data.name}
-        description="Registration, team, profile, and timeline state for this workspace."
-        action={
-          <>
-            {event.data.visibility === "draft" ? (
-              <ActionButton onClick={() => publish.mutate()} disabled={publish.isPending}>
-                {publish.isPending ? "Publishing…" : "Publish event"}
-              </ActionButton>
-            ) : null}
-            <ActionLink to={`/organizer/events/${eventId}/shortlist`} tone="secondary">
-              Open shortlist
-            </ActionLink>
-          </>
-        }
-      />
-      <div className="event-identity">
-        <span>WORKSPACE</span>
-        <strong>{event.data.slug}</strong>
-        <Badge tone={event.data.visibility === "published" ? "success" : "warning"}>
-          {event.data.visibility}
-        </Badge>
-      </div>
-      {publish.isError ? (
-        <div className="error-state" role="alert">
-          {publish.error.message}
-        </div>
-      ) : null}
-      <div className="metric-strip">
-        <div>
-          <span>REGISTRATIONS</span>
-          <strong>{event.data.metrics.registrations}</strong>
-          <small>Application records</small>
-        </div>
-        <div>
-          <span>TEAMS</span>
-          <strong>{event.data.metrics.teams}</strong>
-          <small>Team records</small>
-        </div>
-        <div>
-          <span>PROFILES READY</span>
-          <strong>{event.data.metrics.profilesReady}</strong>
-          <small>Built profiles</small>
-        </div>
-        <div>
-          <span>DEADLINE</span>
-          <strong>
-            {event.data.timeline
-              ? new Date(event.data.timeline.registrationClosesAt).toLocaleDateString()
-              : "Not set"}
-          </strong>
-          <small>{event.data.timeline?.timezone ?? "No timeline"}</small>
-        </div>
-      </div>
-      <div className="dashboard-grid">
-        <Panel label="01 / ACTIVITY" title="Registration flow" className="span-two">
-          {operations.data?.participants.length ? (
-            <div className="event-activity-list">
-              {operations.data.participants.slice(0, 8).map((participant) => (
-                <div key={participant.registrationId}>
-                  <span>{participant.profileStatus === "ready" ? "✓" : "~"}</span>
-                  <div>
-                    <strong>{participant.name}</strong>
-                    <small>
-                      @{participant.github} · {participant.teamId ? "team formed" : "no team"}
-                    </small>
-                  </div>
-                  <Badge tone={participant.profileStatus === "ready" ? "success" : "neutral"}>
-                    {participant.profileStatus}
-                  </Badge>
-                  <time>{new Date(participant.updatedAt).toLocaleString()}</time>
-                </div>
-              ))}
-              <ActionLink to={`/organizer/events/${eventId}/participants`} tone="secondary">
-                Open all participants
+    <div className="mx-auto grid max-w-4xl gap-10">
+      <div className="grid gap-3">
+        <ScreenHead
+          title={data.name}
+          actions={
+            <>
+              <ActionLink
+                to={`/organizer/events/${eventId}/shortlist`}
+                tone={draft ? "default" : "primary"}
+              >
+                Open shortlist
               </ActionLink>
-            </div>
-          ) : operations.isPending ? (
-            <div className="loading-state">Loading registration activity…</div>
-          ) : (
-            <EmptyState title="No registrations yet">
-              Applications will appear here after participants start through the published event
-              page.
-            </EmptyState>
-          )}
-        </Panel>
-        <Panel label="02 / TIMELINE" title="Next milestone">
-          {event.data.timeline ? (
-            <dl className="compact-definition-list">
-              <div>
-                <dt>Registration closes</dt>
-                <dd>{new Date(event.data.timeline.registrationClosesAt).toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt>Shortlist publishes</dt>
-                <dd>{new Date(event.data.timeline.shortlistPublishesAt).toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt>Event starts</dt>
-                <dd>{new Date(event.data.timeline.eventStartsAt).toLocaleString()}</dd>
-              </div>
-            </dl>
-          ) : (
-            <EmptyState title="No timeline configured">
-              Add the event timeline in settings.
-            </EmptyState>
-          )}
-        </Panel>
+              {draft ? (
+                <ActionButton
+                  tone="primary"
+                  disabled={publish.isPending || Boolean(data.missing)}
+                  onClick={() =>
+                    publish.mutate(undefined, {
+                      onSuccess: () => post(`Published at /h/${data.slug}.`),
+                    })
+                  }
+                >
+                  {publish.isPending ? "Publishing…" : "Publish"}
+                </ActionButton>
+              ) : null}
+            </>
+          }
+        >
+          <span className="inline-flex flex-wrap items-center gap-x-3">
+            <StateTag state={data.visibility} />
+            {data.visibility === "published" ? (
+              <Link className="tui-link" to={`/h/${data.slug}`}>
+                /h/{data.slug}
+              </Link>
+            ) : null}
+            {data.visibility === "published" && data.metrics.registrations === 0 ? (
+              <TextAction
+                disabled={unpublish.isPending}
+                onClick={() =>
+                  unpublish.mutate(undefined, { onSuccess: () => post("Back to draft.") })
+                }
+              >
+                unpublish
+              </TextAction>
+            ) : null}
+            {draft && data.missing ? (
+              <Link className="tui-link" to={`/organizer/events/new?draft=${data.id}`}>
+                finish setup ›
+              </Link>
+            ) : null}
+          </span>
+        </ScreenHead>
+        {publish.isError ? <ErrorState message={publish.error.message} /> : null}
+        {unpublish.isError ? <ErrorState message={unpublish.error.message} /> : null}
       </div>
+
+      <div className="grid gap-8">
+        <div className="flex flex-wrap gap-x-10 gap-y-6 sm:gap-x-16">
+          <Stat value={data.metrics.registrations} label="registered" />
+          <Stat value={data.metrics.teams} label="teams" />
+          <Stat value={data.metrics.profilesReady} label="profiles ready" />
+        </div>
+        {nextDeadline ? (
+          <p>
+            <span className="dim">{nextDeadline.label.toLowerCase()} in </span>
+            <time className="font-display text-2xl text-accent" dateTime={nextDeadline.at}>
+              {countdown(nextDeadline.at, now)}
+            </time>
+          </p>
+        ) : data.timeline ? (
+          <p className="dim">All dates have passed.</p>
+        ) : (
+          <p className="dim">
+            No dates yet.{" "}
+            <Link
+              className="tui-link"
+              to={
+                draft
+                  ? `/organizer/events/new?draft=${eventId}`
+                  : `/organizer/events/${eventId}/settings`
+              }
+            >
+              set dates ›
+            </Link>
+          </p>
+        )}
+        {corrections.data?.length ? (
+          <p className="text-warn">
+            ~ {plural(corrections.data.length, "profile report")} open{" "}
+            <Link className="tui-link" to={`/organizer/events/${eventId}/participants`}>
+              review ›
+            </Link>
+          </p>
+        ) : null}
+      </div>
+
+      <Pane title="recent registrations" flush>
+        {operations.isPending ? (
+          <div className="px-6">
+            <LoadingState label="reading registrations" />
+          </div>
+        ) : operations.isError ? (
+          <div className="px-6 pb-3">
+            <ErrorState
+              message={operations.error.message}
+              retry={() => void operations.refetch()}
+            />
+          </div>
+        ) : participants.length === 0 ? (
+          <div className="px-6 pb-3">
+            <EmptyState title={draft ? "Publish to open registration" : "No registrations yet"} />
+          </div>
+        ) : (
+          <>
+            <div className="table-scroll">
+              <table className="tui-table cards">
+                <caption className="sr-only">Most recent registrations</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">participant</th>
+                    <th scope="col">profile</th>
+                    <th scope="col">team</th>
+                    <th scope="col">updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {participants.slice(0, 8).map((participant) => (
+                    <tr key={participant.registrationId}>
+                      <th scope="row" data-label="participant" className="font-bold">
+                        {participant.name}
+                      </th>
+                      <td data-label="profile">
+                        <StateTag state={participant.profileStatus} />
+                      </td>
+                      <td data-label="team">
+                        {participant.teamId ? "yes" : <span className="dim">no</span>}
+                      </td>
+                      <td data-label="updated" className="dim">
+                        {formatDate(participant.updatedAt)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="px-3 pt-3 pb-2">
+              <Link className="tui-link" to={`/organizer/events/${eventId}/participants`}>
+                all {participants.length} participants ›
+              </Link>
+            </div>
+          </>
+        )}
+      </Pane>
+
+      {eventId ? <ActivityLog eventId={eventId} /> : null}
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ event sections */
+
+const sectionTitle = {
+  requirements: "Requirements",
+  participants: "Participants",
+  teams: "Teams",
+  settings: "Settings",
+} as const;
 
 export function EventSectionPage({
   section,
@@ -1669,25 +1954,8 @@ export function EventSectionPage({
 }) {
   const { eventId } = useParams();
   const queryClient = useQueryClient();
+  const { post } = useStatusLine();
   const [configuration, setConfiguration] = useState<EventConfigurationInput | null>(null);
-  const [newSkill, setNewSkill] = useState("");
-  const [quotaDraft, setQuotaDraft] = useState<{
-    attribute: QuotaRule["attribute"];
-    op: QuotaRule["op"];
-    value: string;
-    minShare: number;
-    unit: QuotaRule["unit"];
-    match: QuotaRule["match"];
-  }>({
-    attribute: "college",
-    op: "equals",
-    value: "",
-    minShare: 0.1,
-    unit: "teams",
-    match: "all",
-  });
-  const [aliasName, setAliasName] = useState("");
-  const [aliasValues, setAliasValues] = useState("");
   const event = useQuery({
     queryKey: ["organizer-event", eventId],
     queryFn: () => getOrganizerEvent(eventId ?? ""),
@@ -1700,6 +1968,7 @@ export function EventSectionPage({
     enabled: Boolean(eventId) && (section === "participants" || section === "teams"),
     retry: false,
   });
+  const corrections = useOpenCorrections(section === "participants" ? eventId : undefined);
 
   useEffect(() => {
     if (!event.data?.timeline) return;
@@ -1734,595 +2003,293 @@ export function EventSectionPage({
     },
   });
 
-  const [copyTitle, copyDescription] = (
-    {
-      requirements: [
-        "Requirements and quotas",
-        "Edit target levels, weights, quotas, and college aliases before publishing a run.",
-      ],
-      participants: [
-        "Participants",
-        "Track consent, GitHub verification, CV processing, and profile build state.",
-      ],
-      teams: [
-        "Teams",
-        "Inspect membership, submission eligibility, locks, and looking-for-team participants.",
-      ],
-      settings: [
-        "Event settings",
-        "Update the public page, timeline, team rules, links, visibility, and retention controls.",
-      ],
-    } as const
-  )[section];
-
-  const updateRequirement = (skill: string, field: "target" | "weight", value: number) => {
+  /** Patch the loaded configuration; a no-op until it has loaded. */
+  const patch = (change: Partial<EventConfigurationInput>) =>
+    setConfiguration((current) => (current ? { ...current, ...change } : current));
+  const updateLink = (index: number, change: Partial<{ label: string; url: string }>) =>
     setConfiguration((current) =>
       current
         ? {
             ...current,
-            requirements: current.requirements.map((requirement) =>
-              requirement.skill === skill ? { ...requirement, [field]: value } : requirement,
+            links: current.links.map((candidate, candidateIndex) =>
+              candidateIndex === index ? { ...candidate, ...change } : candidate,
             ),
           }
         : current,
     );
-  };
-  const addRequirement = () => {
-    if (!newSkill) return;
-    setConfiguration((current) =>
-      current && !current.requirements.some((requirement) => requirement.skill === newSkill)
-        ? {
-            ...current,
-            requirements: [
-              ...current.requirements,
-              { skill: newSkill, target: 3, weight: 3, coverage: { mode: "any_member" } },
-            ],
-          }
-        : current,
-    );
-    setNewSkill("");
-  };
-  const addQuota = () => {
-    if (!quotaDraft.value.trim()) return;
-    const listOperator = quotaDraft.op === "in" || quotaDraft.op === "not_in";
-    const value = listOperator
-      ? quotaDraft.value
-          .split(",")
-          .map((entry) => entry.trim())
-          .filter(Boolean)
-      : quotaDraft.value.trim();
-    setConfiguration((current) =>
-      current
-        ? {
-            ...current,
-            quotas: [
-              ...current.quotas,
-              {
-                attribute: quotaDraft.attribute,
-                op: quotaDraft.op,
-                value,
-                minShare: quotaDraft.minShare,
-                unit: quotaDraft.unit,
-                match: quotaDraft.match,
-              },
-            ],
-          }
-        : current,
-    );
-    setQuotaDraft((current) => ({ ...current, value: "" }));
-  };
-  const addAlias = () => {
-    const canonical = aliasName.trim();
-    const aliases = aliasValues
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-    if (!canonical || aliases.length === 0) return;
-    setConfiguration((current) =>
-      current
-        ? {
-            ...current,
-            collegeAliases: { ...current.collegeAliases, [canonical]: aliases },
-          }
-        : current,
-    );
-    setAliasName("");
-    setAliasValues("");
-  };
 
   if (
     event.isPending ||
     (operations.isPending && (section === "participants" || section === "teams"))
   ) {
-    return <div className="loading-state">Loading event operations…</div>;
+    return <LoadingState label="reading event" />;
   }
   if (event.isError || operations.isError) {
     return (
-      <div className="portal-page">
-        <EmptyState
-          title="Event data unavailable"
-          action={<ActionLink to="/organizer">Back to events</ActionLink>}
-        >
-          {(event.error ?? operations.error)?.message}
-        </EmptyState>
-      </div>
+      <EventUnavailable message={(event.error ?? operations.error)?.message ?? "Unknown error"} />
     );
   }
 
   const participants = operations.data?.participants ?? [];
   const teams = operations.data?.teams ?? [];
   const lookingForTeam = participants.filter((participant) => participant.lookingForTeam);
+  const editable = section === "requirements" || section === "settings";
 
   return (
-    <div className="portal-page">
-      <PageHeading
-        eyebrow={`ORGANIZER / ${section.toUpperCase()}`}
-        title={copyTitle}
-        description={copyDescription}
-        action={
-          section === "requirements" || section === "settings" ? (
-            <ActionButton
-              disabled={!configuration || saveConfiguration.isPending}
-              onClick={() => saveConfiguration.mutate()}
-            >
-              {saveConfiguration.isPending ? "Saving…" : "Save changes"}
-            </ActionButton>
-          ) : undefined
-        }
-      />
-      {saveConfiguration.isError ? (
-        <div className="error-state" role="alert">
-          {saveConfiguration.error.message}
-        </div>
-      ) : null}
-      {saveConfiguration.isSuccess ? (
-        <div className="context-notice compact" role="status">
-          <span aria-hidden="true">✓</span>
-          <p>Event configuration saved.</p>
-        </div>
-      ) : null}
+    <div className={`mx-auto grid gap-10 ${editable ? "max-w-2xl" : "max-w-5xl"}`}>
+      <div className="grid gap-3">
+        <ScreenHead
+          title={sectionTitle[section]}
+          actions={
+            editable ? (
+              <ActionButton
+                tone="primary"
+                disabled={!configuration || saveConfiguration.isPending}
+                onClick={() =>
+                  saveConfiguration.mutate(undefined, {
+                    onSuccess: () =>
+                      post(section === "requirements" ? "Requirements saved." : "Settings saved."),
+                  })
+                }
+              >
+                {saveConfiguration.isPending ? "Saving…" : "Save changes"}
+              </ActionButton>
+            ) : undefined
+          }
+        />
+        {saveConfiguration.isError ? (
+          <ErrorState message={saveConfiguration.error.message} />
+        ) : null}
+        {editable && !configuration ? <Notice tone="warn">No timeline yet.</Notice> : null}
+      </div>
 
       {section === "requirements" && configuration ? (
-        <div className="event-config-layout">
-          <Panel label="01 / SCORING" title="Required skills" className="span-two">
-            <div className="requirement-adder">
-              <Field label="Taxonomy skill">
-                <SelectInput
-                  value={newSkill}
-                  onChange={(change) => setNewSkill(change.target.value)}
-                >
-                  <option value="">Select a domain or technology</option>
-                  {technologyOptions.map((option) => (
-                    <option value={option.id} key={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </SelectInput>
-              </Field>
-              <ActionButton disabled={!newSkill} onClick={addRequirement}>
-                Add skill
-              </ActionButton>
-            </div>
-            <div className="requirement-editor event-requirement-editor">
-              <div className="requirement-head">
-                <span>SKILL</span>
-                <span>TARGET</span>
-                <span>WEIGHT</span>
-                <span />
-              </div>
-              {configuration.requirements.map((requirement) => (
-                <div className="requirement-edit-row" key={requirement.skill}>
-                  <strong>
-                    {taxonomy.technologies[requirement.skill]?.label ??
-                      taxonomy.domains[requirement.skill]?.label ??
-                      requirement.skill}
-                  </strong>
-                  <label>
-                    <span>{requirement.target.toFixed(1)}</span>
-                    <input
-                      type="range"
-                      min="1"
-                      max="5"
-                      step="0.5"
-                      value={requirement.target}
-                      onChange={(change) =>
-                        updateRequirement(requirement.skill, "target", Number(change.target.value))
-                      }
-                    />
-                  </label>
-                  <label>
-                    <span>{requirement.weight}</span>
-                    <input
-                      type="range"
-                      min="0"
-                      max="5"
-                      step="1"
-                      value={requirement.weight}
-                      onChange={(change) =>
-                        updateRequirement(requirement.skill, "weight", Number(change.target.value))
-                      }
-                    />
-                  </label>
-                  <button
-                    type="button"
-                    disabled={configuration.requirements.length === 1}
-                    onClick={() =>
-                      setConfiguration((current) =>
-                        current
-                          ? {
-                              ...current,
-                              requirements: current.requirements.filter(
-                                (candidate) => candidate.skill !== requirement.skill,
-                              ),
-                            }
-                          : current,
-                      )
-                    }
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          </Panel>
-          <Panel label="02 / QUOTAS" title="Structured share rules">
-            <div className="quota-builder">
-              <Field label="Attribute">
-                <SelectInput
-                  value={quotaDraft.attribute}
-                  onChange={(change) =>
-                    setQuotaDraft((current) => ({
-                      ...current,
-                      attribute: change.target.value as QuotaRule["attribute"],
-                    }))
-                  }
-                >
-                  <option value="college">College</option>
-                  <option value="year_of_study">Year of study</option>
-                  <option value="branch">Branch</option>
-                  <option value="city">City</option>
-                </SelectInput>
-              </Field>
-              <Field label="Operator">
-                <SelectInput
-                  value={quotaDraft.op}
-                  onChange={(change) =>
-                    setQuotaDraft((current) => ({
-                      ...current,
-                      op: change.target.value as QuotaRule["op"],
-                    }))
-                  }
-                >
-                  <option value="equals">Equals</option>
-                  <option value="not_equals">Does not equal</option>
-                  <option value="in">In list</option>
-                  <option value="not_in">Not in list</option>
-                </SelectInput>
-              </Field>
-              <Field label="Value" hint="Separate list values with commas.">
-                <TextInput
-                  value={quotaDraft.value}
-                  onChange={(change) =>
-                    setQuotaDraft((current) => ({ ...current, value: change.target.value }))
-                  }
-                />
-              </Field>
-              <Field label="Minimum share">
-                <TextInput
-                  type="number"
-                  min="0.01"
-                  max="1"
-                  step="0.01"
-                  value={quotaDraft.minShare}
-                  onChange={(change) =>
-                    setQuotaDraft((current) => ({
-                      ...current,
-                      minShare: Number(change.target.value),
-                    }))
-                  }
-                />
-              </Field>
-              <Field label="Unit">
-                <SelectInput
-                  value={quotaDraft.unit}
-                  onChange={(change) =>
-                    setQuotaDraft((current) => ({
-                      ...current,
-                      unit: change.target.value as QuotaRule["unit"],
-                    }))
-                  }
-                >
-                  <option value="teams">Teams</option>
-                  <option value="participants">Participants</option>
-                </SelectInput>
-              </Field>
-              <Field label="Team match">
-                <SelectInput
-                  value={quotaDraft.match}
-                  disabled={quotaDraft.unit === "participants"}
-                  onChange={(change) =>
-                    setQuotaDraft((current) => ({
-                      ...current,
-                      match: change.target.value as QuotaRule["match"],
-                    }))
-                  }
-                >
-                  <option value="all">All members</option>
-                  <option value="majority">Majority</option>
-                  <option value="any">Any member</option>
-                </SelectInput>
-              </Field>
-              <ActionButton disabled={!quotaDraft.value.trim()} onClick={addQuota}>
-                Add quota
-              </ActionButton>
-            </div>
-            <div className="configured-rules">
-              {configuration.quotas.map((quota) => (
-                <div key={JSON.stringify(quota)}>
-                  <p>
-                    {quota.attribute.replaceAll("_", " ")} {quota.op.replaceAll("_", " ")}{" "}
-                    {Array.isArray(quota.value) ? quota.value.join(", ") : quota.value}
-                  </p>
-                  <small>
-                    {Math.round(quota.minShare * 100)}% of {quota.unit}
-                    {quota.unit === "teams" ? ` · ${quota.match}` : ""}
-                  </small>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setConfiguration((current) =>
-                        current
-                          ? {
-                              ...current,
-                              quotas: current.quotas.filter((candidate) => candidate !== quota),
-                            }
-                          : current,
-                      )
-                    }
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-              {configuration.quotas.length === 0 ? (
-                <p className="muted-copy">No quotas. Capacity fills strictly by score order.</p>
-              ) : null}
-            </div>
-          </Panel>
-          <Panel label="03 / NORMALIZATION" title="College aliases">
-            <div className="alias-builder">
-              <Field label="Canonical college">
-                <TextInput
-                  value={aliasName}
-                  onChange={(change) => setAliasName(change.target.value)}
-                />
-              </Field>
-              <Field label="Aliases" hint="Comma-separated names from registration data.">
-                <TextInput
-                  value={aliasValues}
-                  onChange={(change) => setAliasValues(change.target.value)}
-                />
-              </Field>
-              <ActionButton disabled={!aliasName.trim() || !aliasValues.trim()} onClick={addAlias}>
-                Add mapping
-              </ActionButton>
-            </div>
-            <div className="configured-rules aliases-list">
-              {Object.entries(configuration.collegeAliases).map(([canonical, aliases]) => (
-                <div key={canonical}>
-                  <p>{canonical}</p>
-                  <small>{aliases.join(" · ")}</small>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setConfiguration((current) => {
-                        if (!current) return current;
-                        const next = { ...current.collegeAliases };
-                        delete next[canonical];
-                        return { ...current, collegeAliases: next };
-                      })
-                    }
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          </Panel>
-        </div>
-      ) : null}
-
-      {section === "participants" ? (
         <>
-          <div className="metric-strip">
-            <div>
-              <span>REGISTERED</span>
-              <strong>{participants.length}</strong>
-              <small>Application records</small>
-            </div>
-            <div>
-              <span>PROFILES READY</span>
-              <strong>
-                {participants.filter((person) => person.profileStatus === "ready").length}
-              </strong>
-              <small>Evidence profiles complete</small>
-            </div>
-            <div>
-              <span>TEAMLESS</span>
-              <strong>{participants.filter((person) => !person.teamId).length}</strong>
-              <small>No current roster</small>
-            </div>
-            <div>
-              <span>LOOKING</span>
-              <strong>{lookingForTeam.length}</strong>
-              <small>Visible in teammate pool</small>
-            </div>
-          </div>
-          <Panel
-            label="EVENT / PARTICIPANTS"
-            title={event.data?.name ?? "Participants"}
-            className="operations-panel"
-          >
-            {participants.length ? (
-              <div className="operations-table participants-operations-table">
-                <div className="operations-row operations-head">
-                  <span>PARTICIPANT</span>
-                  <span>IDENTITY</span>
-                  <span>COLLEGE</span>
-                  <span>PROFILE</span>
-                  <span>APPLICATION</span>
-                </div>
-                {participants.map((participant) => (
-                  <div className="operations-row" key={participant.registrationId}>
-                    <span>
-                      <strong>{participant.name}</strong>
-                      <small>@{participant.github}</small>
-                    </span>
-                    <Badge tone={participant.verified ? "success" : "warning"}>
-                      {participant.verified ? "verified" : "unverified"}
-                    </Badge>
-                    <span>{participant.college ?? "Not provided"}</span>
-                    <Badge tone={participant.profileStatus === "ready" ? "success" : "neutral"}>
-                      {participant.profileStatus}
-                    </Badge>
-                    <Badge tone={participant.status === "selected" ? "success" : "neutral"}>
-                      {participant.status.replace("_", " ")}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <EmptyState title="No registrations yet">
-                Participants appear here only after starting the published event application.
-              </EmptyState>
-            )}
-          </Panel>
+          {(["area", "tool"] as const).map((kind) => (
+            <Pane
+              key={kind}
+              title={kind === "area" ? "areas" : "tools"}
+              meta={
+                configuration.requirements.filter(
+                  (requirement) => (kind === "area") === isArea(requirement.skill),
+                ).length
+              }
+            >
+              <RequirementsEditor
+                value={configuration.requirements}
+                onChange={(requirements) => patch({ requirements })}
+                keepOne
+                kind={kind}
+              />
+            </Pane>
+          ))}
+          <Pane title="quotas" meta={configuration.quotas.length}>
+            <QuotaBuilder value={configuration.quotas} onChange={(quotas) => patch({ quotas })} />
+          </Pane>
+          <Pane title="college aliases" meta={Object.keys(configuration.collegeAliases).length}>
+            <AliasEditor
+              value={configuration.collegeAliases}
+              onChange={(collegeAliases) => patch({ collegeAliases })}
+            />
+          </Pane>
         </>
       ) : null}
 
-      {section === "teams" ? (
-        <div className="event-config-layout">
-          <Panel label="01 / ROSTERS" title={`${teams.length} event teams`} className="span-two">
-            {teams.length ? (
-              <div className="organizer-team-list">
-                {teams.map((team) => (
-                  <article key={team.id}>
-                    <header>
-                      <div>
-                        <strong>{team.name}</strong>
-                        <small>
-                          {team.members.length} member{team.members.length === 1 ? "" : "s"}
-                        </small>
-                      </div>
-                      <Badge
-                        tone={
-                          team.status === "submitted" || team.status === "locked"
-                            ? "success"
-                            : "neutral"
-                        }
-                      >
-                        {team.status}
-                      </Badge>
-                    </header>
-                    <div>
-                      {team.members.map((member) => (
-                        <p key={member.id}>
-                          <span>{member.name}</span>
-                          <small>@{member.github}</small>
-                          <Badge tone={member.profileStatus === "ready" ? "success" : "warning"}>
-                            {member.profileStatus}
-                          </Badge>
-                        </p>
-                      ))}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <EmptyState title="No teams formed">
-                Created and joined rosters appear here without generated examples.
-              </EmptyState>
-            )}
-          </Panel>
-          <Panel label="02 / DISCOVERY" title="Looking for a team">
-            {lookingForTeam.length ? (
-              <div className="looking-pool-list">
-                {lookingForTeam.map((participant) => (
-                  <article key={participant.personId}>
-                    <strong>{participant.name}</strong>
-                    <span>{participant.college ?? "College not provided"}</span>
-                    <small>
-                      {participant.topSkills.length
-                        ? participant.topSkills
-                            .map(
-                              (skill) =>
-                                taxonomy.technologies[skill]?.label ??
-                                taxonomy.domains[skill]?.label ??
-                                skill,
-                            )
-                            .join(" · ")
-                        : "Profile skills pending"}
-                    </small>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <EmptyState title="Nobody is listed">
-                Applicants can opt into this event-specific pool from their team page.
-              </EmptyState>
-            )}
-          </Panel>
+      {section === "participants" ? (
+        <Pane
+          title="participants"
+          meta={`${participants.length} registered · ${lookingForTeam.length} looking`}
+          flush
+        >
+          {participants.length ? (
+            <div className="table-scroll">
+              <table className="tui-table cards">
+                <caption className="sr-only">Participants in {event.data?.name}</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">participant</th>
+                    <th scope="col">college</th>
+                    <th scope="col">profile</th>
+                    <th scope="col">application</th>
+                    <th scope="col">team</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {participants.map((participant) => (
+                    <tr key={participant.registrationId}>
+                      <th scope="row" data-label="participant" className="font-bold">
+                        <span>
+                          {participant.name}
+                          <span className="dim block font-normal">
+                            @{participant.github}
+                            {participant.verified ? null : (
+                              <span className="text-warn"> unverified</span>
+                            )}
+                          </span>
+                        </span>
+                      </th>
+                      <td data-label="college" className="wrap">
+                        {participant.college ?? <span className="dim">—</span>}
+                      </td>
+                      <td data-label="profile">
+                        <StateTag state={participant.profileStatus} />
+                      </td>
+                      <td data-label="application">
+                        <StateTag state={participant.status} />
+                      </td>
+                      <td data-label="team">
+                        {participant.teamId ? (
+                          "yes"
+                        ) : (
+                          <span className="dim">
+                            {participant.lookingForTeam ? "looking" : "no"}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="px-6 pb-3">
+              <EmptyState title="No registrations yet" />
+            </div>
+          )}
+        </Pane>
+      ) : null}
+
+      {section === "participants" && eventId && corrections.data?.length ? (
+        <div className="grid gap-3">
+          <p className="text-warn">~ {plural(corrections.data.length, "profile report")} open</p>
+          <Details summary="profile reports" meta={corrections.data.length}>
+            <ul className="grid gap-6">
+              {corrections.data.map((correction) => (
+                <CorrectionRow key={correction.id} eventId={eventId} correction={correction} />
+              ))}
+            </ul>
+          </Details>
         </div>
+      ) : null}
+      {section === "participants" && corrections.isError ? (
+        <ErrorState message={corrections.error.message} retry={() => void corrections.refetch()} />
+      ) : null}
+
+      {section === "teams" ? (
+        <>
+          <Pane title="teams" meta={String(teams.length)} flush>
+            {teams.length ? (
+              <div className="table-scroll">
+                <table className="tui-table cards">
+                  <caption className="sr-only">Teams in {event.data?.name}</caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">team</th>
+                      <th scope="col">members</th>
+                      <th scope="col">profiles</th>
+                      <th scope="col">state</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {teams.map((team) => (
+                      <tr key={team.id}>
+                        <th scope="row" data-label="team" className="font-bold">
+                          {team.name}
+                        </th>
+                        <td data-label="members" className="wrap">
+                          <span>
+                            {team.members.map((member, index) => (
+                              <span key={member.id}>
+                                {index ? <span className="dim">, </span> : null}
+                                {member.name}
+                                {member.id === team.captainId ? (
+                                  <span className="dim" title="captain">
+                                    {" "}
+                                    ★<span className="sr-only">captain</span>
+                                  </span>
+                                ) : null}
+                              </span>
+                            ))}
+                          </span>
+                        </td>
+                        <td data-label="profiles" className="num">
+                          {team.members.filter((member) => member.profileStatus === "ready").length}
+                          /{team.members.length} ready
+                        </td>
+                        <td data-label="state">
+                          <StateTag state={team.status} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="px-6 pb-3">
+                <EmptyState title="No teams yet" />
+              </div>
+            )}
+          </Pane>
+
+          {lookingForTeam.length ? (
+            <Details summary="looking for a team" meta={lookingForTeam.length}>
+              <ul className="grid gap-2">
+                {lookingForTeam.map((participant) => (
+                  <li key={participant.personId}>
+                    <span className="font-bold">{participant.name}</span>{" "}
+                    {participant.topSkills.length ? (
+                      splitSkills(participant.topSkills, (id) => id).map((group, index) => (
+                        <span
+                          className={group.label === "tools" ? "dim" : undefined}
+                          key={group.label}
+                        >
+                          {index > 0 ? " · " : ""}
+                          {group.items.map(skillLabel).join(", ")}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="dim">profile building</span>
+                    )}
+                    {participant.college ? (
+                      <span className="dim"> · {participant.college}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </Details>
+          ) : null}
+        </>
       ) : null}
 
       {section === "settings" && configuration ? (
-        <div className="event-config-layout settings-layout">
-          <Panel label="01 / PUBLIC PAGE" title="Event identity" className="span-two">
-            <div className="form-grid">
-              <Field label="Event name">
+        <>
+          <FormSection title="public page">
+            <div className="grid items-start gap-4 sm:grid-cols-2">
+              <Field label="Event name" required>
                 <TextInput
                   value={configuration.name}
-                  onChange={(change) =>
-                    setConfiguration((current) =>
-                      current ? { ...current, name: change.target.value } : current,
-                    )
-                  }
+                  onChange={(change) => patch({ name: change.target.value })}
                 />
               </Field>
-              <Field label="Tagline">
+              <Field label="Tagline" required>
                 <TextInput
                   value={configuration.tagline}
                   maxLength={140}
-                  onChange={(change) =>
-                    setConfiguration((current) =>
-                      current ? { ...current, tagline: change.target.value } : current,
-                    )
-                  }
+                  onChange={(change) => patch({ tagline: change.target.value })}
                 />
               </Field>
-              <Field label="Description" className="full-field">
+              <Field label="Description" hint="Markdown" className="sm:col-span-2" required>
                 <TextArea
                   value={configuration.description}
-                  rows={8}
-                  onChange={(change) =>
-                    setConfiguration((current) =>
-                      current ? { ...current, description: change.target.value } : current,
-                    )
-                  }
+                  rows={6}
+                  onChange={(change) => patch({ description: change.target.value })}
                 />
               </Field>
               <Field label="Mode">
                 <SelectInput
                   value={configuration.mode}
                   onChange={(change) =>
-                    setConfiguration((current) =>
-                      current
-                        ? {
-                            ...current,
-                            mode: change.target.value as EventConfigurationInput["mode"],
-                          }
-                        : current,
-                    )
+                    patch({ mode: change.target.value as EventConfigurationInput["mode"] })
                   }
                 >
                   <option value="in_person">In person</option>
@@ -2330,1013 +2297,99 @@ export function EventSectionPage({
                   <option value="hybrid">Hybrid</option>
                 </SelectInput>
               </Field>
-              <Field label="Venue" hint="Required unless the event is online.">
+              <Field label="Venue" required={configuration.mode !== "online"}>
                 <TextInput
                   value={configuration.venue ?? ""}
-                  onChange={(change) =>
-                    setConfiguration((current) =>
-                      current ? { ...current, venue: change.target.value } : current,
-                    )
-                  }
+                  onChange={(change) => patch({ venue: change.target.value })}
                 />
               </Field>
             </div>
-          </Panel>
-          <Panel label="02 / TEAM RULES" title="Seats and roster size">
-            <div className="form-grid compact-form-grid">
-              <Field label="Minimum members">
+          </FormSection>
+
+          <FormSection title="dates" meta="IST">
+            <TimelineFields
+              value={
+                Object.fromEntries(
+                  timelineFields.map(([key]) => [
+                    key,
+                    isoToIstDateTime(configuration.timeline[key]),
+                  ]),
+                ) as Record<TimelineKey, string>
+              }
+              onChange={(key, value) => {
+                // A cleared datetime-local input has no instant to store.
+                if (!value) return;
+                setConfiguration((current) =>
+                  current
+                    ? {
+                        ...current,
+                        timeline: { ...current.timeline, [key]: istDateTimeToIso(value) },
+                      }
+                    : current,
+                );
+              }}
+            />
+          </FormSection>
+
+          <FormSection title="teams">
+            <TeamSizeFields
+              min={configuration.teamSize.min}
+              max={configuration.teamSize.max}
+              capacity={configuration.capacity}
+              onMin={(min) => patch({ teamSize: { ...configuration.teamSize, min } })}
+              onMax={(max) => patch({ teamSize: { ...configuration.teamSize, max } })}
+              onCapacity={(capacity) => patch({ capacity })}
+            />
+          </FormSection>
+
+          <FormSection title="links" meta={`${configuration.links.length} of 12`}>
+            {configuration.links.map((link, index) => (
+              <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: links are edited in place; a content key would remount the input on every keystroke
+                key={index}
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)_auto]"
+              >
                 <TextInput
-                  type="number"
-                  min="1"
-                  max="6"
-                  value={configuration.teamSize.min}
-                  onChange={(change) =>
-                    setConfiguration((current) =>
-                      current
-                        ? {
-                            ...current,
-                            teamSize: { ...current.teamSize, min: Number(change.target.value) },
-                          }
-                        : current,
-                    )
-                  }
+                  aria-label={`Link ${index + 1} label`}
+                  placeholder="Label"
+                  value={link.label}
+                  className="col-span-2 sm:col-span-1"
+                  onChange={(change) => updateLink(index, { label: change.target.value })}
                 />
-              </Field>
-              <Field label="Maximum members">
                 <TextInput
-                  type="number"
-                  min="1"
-                  max="6"
-                  value={configuration.teamSize.max}
-                  onChange={(change) =>
-                    setConfiguration((current) =>
-                      current
-                        ? {
-                            ...current,
-                            teamSize: { ...current.teamSize, max: Number(change.target.value) },
-                          }
-                        : current,
-                    )
-                  }
+                  aria-label={`Link ${index + 1} URL`}
+                  type="url"
+                  value={link.url}
+                  onChange={(change) => updateLink(index, { url: change.target.value })}
                 />
-              </Field>
-              <Field label="Participant capacity" className="full-field">
-                <TextInput
-                  type="number"
-                  min="1"
-                  max="5000"
-                  value={configuration.capacity}
-                  onChange={(change) =>
-                    setConfiguration((current) =>
-                      current ? { ...current, capacity: Number(change.target.value) } : current,
-                    )
+                <TextAction
+                  tone="danger"
+                  aria-label={`Remove link ${index + 1}`}
+                  onClick={() =>
+                    patch({
+                      links: configuration.links.filter(
+                        (_, candidateIndex) => candidateIndex !== index,
+                      ),
+                    })
                   }
-                />
-              </Field>
-            </div>
-          </Panel>
-          <Panel label="03 / TIMELINE" title="IST milestones" className="span-two">
-            <div className="timeline-grid">
-              {(
-                [
-                  ["registrationOpensAt", "Registration opens"],
-                  ["registrationClosesAt", "Registration closes"],
-                  ["shortlistPublishesAt", "Shortlist publishes"],
-                  ["rsvpDeadlineAt", "RSVP deadline"],
-                  ["eventStartsAt", "Event starts"],
-                  ["eventEndsAt", "Event ends"],
-                ] as const
-              ).map(([key, label]) => (
-                <Field label={label} key={key}>
-                  <TextInput
-                    type="datetime-local"
-                    value={isoToIstDateTime(configuration.timeline[key])}
-                    onChange={(change) =>
-                      setConfiguration((current) =>
-                        current
-                          ? {
-                              ...current,
-                              timeline: {
-                                ...current.timeline,
-                                [key]: istDateTimeToIso(change.target.value),
-                              },
-                            }
-                          : current,
-                      )
-                    }
-                  />
-                </Field>
-              ))}
-            </div>
-          </Panel>
-          <Panel label="04 / LINKS" title="Public resources">
-            <div className="settings-link-list">
-              {configuration.links.map((link, index) => (
-                <div key={`${link.label}-${link.url}`}>
-                  <TextInput
-                    aria-label={`Link ${index + 1} label`}
-                    value={link.label}
-                    onChange={(change) =>
-                      setConfiguration((current) =>
-                        current
-                          ? {
-                              ...current,
-                              links: current.links.map((candidate, candidateIndex) =>
-                                candidateIndex === index
-                                  ? { ...candidate, label: change.target.value }
-                                  : candidate,
-                              ),
-                            }
-                          : current,
-                      )
-                    }
-                  />
-                  <TextInput
-                    aria-label={`Link ${index + 1} URL`}
-                    value={link.url}
-                    onChange={(change) =>
-                      setConfiguration((current) =>
-                        current
-                          ? {
-                              ...current,
-                              links: current.links.map((candidate, candidateIndex) =>
-                                candidateIndex === index
-                                  ? { ...candidate, url: change.target.value }
-                                  : candidate,
-                              ),
-                            }
-                          : current,
-                      )
-                    }
-                  />
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setConfiguration((current) =>
-                        current
-                          ? {
-                              ...current,
-                              links: current.links.filter(
-                                (_, candidateIndex) => candidateIndex !== index,
-                              ),
-                            }
-                          : current,
-                      )
-                    }
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
+                >
+                  remove
+                </TextAction>
+              </div>
+            ))}
+            <div>
               <ActionButton
-                tone="secondary"
                 disabled={configuration.links.length >= 12}
                 onClick={() =>
-                  setConfiguration((current) =>
-                    current
-                      ? {
-                          ...current,
-                          links: [...current.links, { label: "", url: "https://" }],
-                        }
-                      : current,
-                  )
+                  patch({ links: [...configuration.links, { label: "", url: "https://" }] })
                 }
               >
                 Add link
               </ActionButton>
             </div>
-          </Panel>
-        </div>
+          </FormSection>
+        </>
       ) : null}
-    </div>
-  );
-}
-
-export function ShortlistWorkspacePage() {
-  const { eventId } = useParams();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const [alpha, setAlpha] = useState(0.7);
-  const [novelty, setNovelty] = useState(10);
-  const [minFit, setMinFit] = useState(0);
-  const [capacity, setCapacity] = useState(100);
-  const [waitlist, setWaitlist] = useState(10);
-  const [confidenceFactors, setConfidenceFactors] = useState({
-    high: 1,
-    medium: 0.85,
-    low: 0.6,
-  });
-  const [requirements, setRequirements] = useState<RankingParams["requirements"]>([]);
-  const [overrides, setOverrides] = useState<SelectionOverride[]>([]);
-  const [overrideReason, setOverrideReason] = useState("");
-  const [runName, setRunName] = useState("Run 1");
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
-  const [mobilePane, setMobilePane] = useState<"parameters" | "results" | "inspector">("results");
-  const panes = useMemo(() => ["parameters", "results", "inspector"] as const, []);
-  const shortlist = useQuery({
-    queryKey: ["organizer-shortlist", eventId],
-    queryFn: () => getOrganizerShortlist(eventId ?? ""),
-    enabled: Boolean(eventId),
-    retry: false,
-  });
-
-  useEffect(() => {
-    if (!shortlist.data) return;
-    const { ranking } = shortlist.data.event;
-    setAlpha(ranking.alpha);
-    setNovelty(ranking.noveltyWeight);
-    setMinFit(ranking.minFit);
-    setConfidenceFactors(ranking.confidenceFactors);
-    setRequirements(ranking.requirements);
-    setCapacity(shortlist.data.event.capacity);
-    setWaitlist(Math.min(500, Math.ceil(shortlist.data.teams.length * 0.2)));
-    setRunName(`Run ${shortlist.data.runs.length + 1}`);
-  }, [shortlist.data]);
-
-  const rankingParams = useMemo<RankingParams | null>(() => {
-    const defaults = shortlist.data?.event.ranking;
-    if (!defaults || requirements.length === 0) return null;
-    return {
-      ...defaults,
-      requirements,
-      alpha,
-      noveltyWeight: novelty,
-      confidenceFactors,
-      minFit,
-    };
-  }, [alpha, confidenceFactors, minFit, novelty, requirements, shortlist.data]);
-
-  const decision = useMemo(() => {
-    if (!shortlist.data || !rankingParams) return null;
-    const ranked = rank(shortlist.data.profiles, shortlist.data.rankingTeams, rankingParams);
-    return selectShortlist(ranked, shortlist.data.teams, {
-      capacity,
-      waitlistSize: waitlist,
-      quotas: shortlist.data.event.quotas,
-      overrides,
-    });
-  }, [capacity, overrides, rankingParams, shortlist.data, waitlist]);
-
-  useEffect(() => {
-    if (!decision?.results.length) {
-      setSelectedTeamId(null);
-      return;
-    }
-    if (!decision.results.some((result) => result.teamId === selectedTeamId)) {
-      setSelectedTeamId(decision.results[0]?.teamId ?? null);
-    }
-  }, [decision, selectedTeamId]);
-
-  const saveRun = useMutation({
-    mutationFn: () => {
-      if (!eventId || !rankingParams) throw new Error("Shortlist parameters are not loaded");
-      return saveOrganizerShortlistRun(eventId, {
-        name: runName,
-        params: rankingParams,
-        selection: {
-          capacity,
-          waitlistSize: waitlist,
-          quotas: shortlist.data?.event.quotas ?? [],
-          overrides,
-        },
-      });
-    },
-    onSuccess: async (run) => {
-      setActiveRunId(run.id);
-      setRunName(`Run ${(shortlist.data?.runs.length ?? 0) + 2}`);
-      await queryClient.invalidateQueries({ queryKey: ["organizer-shortlist", eventId] });
-    },
-  });
-  const publishRun = useMutation({
-    mutationFn: () => {
-      if (!eventId || !activeRunId) throw new Error("Save a shortlist run before publishing");
-      return publishOrganizerShortlistRun(eventId, activeRunId);
-    },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["organizer-shortlist", eventId] }),
-        queryClient.invalidateQueries({ queryKey: ["organizer-event", eventId] }),
-        queryClient.invalidateQueries({ queryKey: ["organizer-events"] }),
-      ]);
-    },
-  });
-
-  const selectedResult = decision?.results.find((result) => result.teamId === selectedTeamId);
-  const selectedTeam = shortlist.data?.teams.find((team) => team.teamId === selectedTeamId);
-  const selectedOverride = overrides.find((override) => override.teamId === selectedTeamId);
-  const activeRun = shortlist.data?.runs.find((run) => run.id === activeRunId);
-  const selectedCount =
-    decision?.results.filter((result) => result.status === "selected").length ?? 0;
-
-  const setRequirement = (skill: string, field: "target" | "weight", value: number) => {
-    setRequirements((current) =>
-      current.map((requirement) =>
-        requirement.skill === skill ? { ...requirement, [field]: value } : requirement,
-      ),
-    );
-  };
-  const addOverride = (action: SelectionOverride["action"]) => {
-    if (!selectedTeamId || overrideReason.trim().length < 3) return;
-    setOverrides((current) => [
-      ...current.filter((override) => override.teamId !== selectedTeamId),
-      { teamId: selectedTeamId, action, reason: overrideReason.trim() },
-    ]);
-    setOverrideReason("");
-  };
-
-  if (shortlist.isPending) return <div className="loading-state">Loading shortlist workspace…</div>;
-  if (shortlist.isError) {
-    return (
-      <div className="portal-page">
-        <EmptyState
-          title="Shortlist unavailable"
-          action={<ActionLink to={`/organizer/events/${eventId}`}>Back to event</ActionLink>}
-        >
-          {shortlist.error.message}
-        </EmptyState>
-      </div>
-    );
-  }
-
-  return (
-    <div className="shortlist-page">
-      <header className="shortlist-heading">
-        <div>
-          <p>ORGANIZER / SHORTLIST</p>
-          <h1>Decision workspace</h1>
-          <span>{shortlist.data.event.name} · every parameter change re-ranks locally</span>
-        </div>
-        <div className="shortlist-actions">
-          {activeRunId ? (
-            <a
-              className="btn terminal-action action-secondary"
-              href={`/api/organizer/events/${eventId}/shortlist/runs/${activeRunId}.csv`}
-            >
-              <span aria-hidden="true">[</span>
-              <span>Export CSV</span>
-              <span aria-hidden="true">]</span>
-            </a>
-          ) : null}
-          <ActionButton
-            tone="secondary"
-            disabled={!decision?.results.length || saveRun.isPending || runName.trim().length < 2}
-            onClick={() => saveRun.mutate()}
-          >
-            {saveRun.isPending ? "Saving…" : "Save run"}
-          </ActionButton>
-          <ActionButton
-            disabled={!activeRunId || activeRun?.published || publishRun.isPending}
-            onClick={() => publishRun.mutate()}
-          >
-            {activeRun?.published ? "Published" : publishRun.isPending ? "Publishing…" : "Publish"}
-          </ActionButton>
-        </div>
-      </header>
-      {saveRun.isError || publishRun.isError ? (
-        <div className="shortlist-error" role="alert">
-          {(saveRun.error ?? publishRun.error)?.message}
-        </div>
-      ) : null}
-      <div className="mobile-pane-tabs" role="tablist">
-        {panes.map((pane) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mobilePane === pane}
-            key={pane}
-            onClick={() => setMobilePane(pane)}
-          >
-            {pane}
-          </button>
-        ))}
-      </div>
-      <div className="shortlist-panes">
-        <section
-          className={`shortlist-pane parameters-pane ${mobilePane === "parameters" ? "mobile-active" : ""}`}
-        >
-          <header>
-            <span>01 / PARAMETERS</span>
-            <Badge tone="neutral">Editable</Badge>
-          </header>
-          <div className="pane-scroll">
-            <label className="parameter-control">
-              <span>
-                <strong>Fit / depth balance</strong>
-                <output>{alpha.toFixed(2)}</output>
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={alpha}
-                onChange={(event) => setAlpha(Number(event.target.value))}
-              />
-              <small>Lower favours raw strength; higher favours balanced coverage.</small>
-            </label>
-            <label className="parameter-control">
-              <span>
-                <strong>Novelty weight</strong>
-                <output>{novelty.toFixed(0)} pts</output>
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="25"
-                step="1"
-                value={novelty}
-                onChange={(event) => setNovelty(Number(event.target.value))}
-              />
-              <small>Contribution from the team's strongest original project.</small>
-            </label>
-            <label className="parameter-control">
-              <span>
-                <strong>Minimum fit</strong>
-                <output>{Math.round(minFit * 100)}%</output>
-              </span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={minFit}
-                onChange={(event) => setMinFit(Number(event.target.value))}
-              />
-              <small>Teams below this requirement coverage become ineligible.</small>
-            </label>
-            <div className="numeric-controls">
-              <Field label="Capacity">
-                <TextInput
-                  type="number"
-                  min="1"
-                  max="5000"
-                  value={capacity}
-                  onChange={(event) => setCapacity(Number(event.target.value))}
-                />
-              </Field>
-              <Field label="Waitlist size">
-                <TextInput
-                  type="number"
-                  min="0"
-                  max="500"
-                  value={waitlist}
-                  onChange={(event) => setWaitlist(Number(event.target.value))}
-                />
-              </Field>
-            </div>
-            <Field label="Run name" hint="Saved runs are immutable snapshots.">
-              <TextInput
-                value={runName}
-                maxLength={100}
-                onChange={(event) => setRunName(event.target.value)}
-              />
-            </Field>
-            <div className="parameter-section">
-              <div>
-                <strong>Requirements</strong>
-                <ActionLink to={`/organizer/events/${eventId}/requirements`} tone="quiet">
-                  Edit
-                </ActionLink>
-              </div>
-              <div className="shortlist-requirements">
-                {requirements.map((requirement) => (
-                  <article key={requirement.skill}>
-                    <div>
-                      <strong>
-                        {taxonomy.technologies[requirement.skill]?.label ??
-                          taxonomy.domains[requirement.skill]?.label ??
-                          requirement.skill}
-                      </strong>
-                      <small>{requirement.coverage.mode.replace("_", " ")}</small>
-                    </div>
-                    <label>
-                      <span>Target {requirement.target.toFixed(1)}</span>
-                      <input
-                        type="range"
-                        min="1"
-                        max="5"
-                        step="0.5"
-                        value={requirement.target}
-                        onChange={(event) =>
-                          setRequirement(requirement.skill, "target", Number(event.target.value))
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>Weight {requirement.weight}</span>
-                      <input
-                        type="range"
-                        min="0"
-                        max="5"
-                        step="1"
-                        value={requirement.weight}
-                        onChange={(event) =>
-                          setRequirement(requirement.skill, "weight", Number(event.target.value))
-                        }
-                      />
-                    </label>
-                  </article>
-                ))}
-              </div>
-            </div>
-            <div className="parameter-section">
-              <div>
-                <strong>Confidence factors</strong>
-              </div>
-              <dl className="compact-definition-list">
-                <div>
-                  <dt>High confidence</dt>
-                  <dd>
-                    <input
-                      aria-label="High confidence factor"
-                      type="number"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={confidenceFactors.high}
-                      onChange={(event) =>
-                        setConfidenceFactors((current) => ({
-                          ...current,
-                          high: Number(event.target.value),
-                        }))
-                      }
-                    />
-                  </dd>
-                </div>
-                <div>
-                  <dt>Medium confidence</dt>
-                  <dd>
-                    <input
-                      aria-label="Medium confidence factor"
-                      type="number"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={confidenceFactors.medium}
-                      onChange={(event) =>
-                        setConfidenceFactors((current) => ({
-                          ...current,
-                          medium: Number(event.target.value),
-                        }))
-                      }
-                    />
-                  </dd>
-                </div>
-                <div>
-                  <dt>Low confidence</dt>
-                  <dd>
-                    <input
-                      aria-label="Low confidence factor"
-                      type="number"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value={confidenceFactors.low}
-                      onChange={(event) =>
-                        setConfidenceFactors((current) => ({
-                          ...current,
-                          low: Number(event.target.value),
-                        }))
-                      }
-                    />
-                  </dd>
-                </div>
-              </dl>
-            </div>
-            {shortlist.data.runs.length > 0 ? (
-              <div className="parameter-section saved-runs-list">
-                <div>
-                  <strong>Saved runs</strong>
-                  <span>{shortlist.data.runs.length}</span>
-                </div>
-                {shortlist.data.runs.map((run) => (
-                  <button
-                    type="button"
-                    className={activeRunId === run.id ? "active" : ""}
-                    key={run.id}
-                    onClick={() => navigate(`/organizer/events/${eventId}/runs/${run.id}`)}
-                  >
-                    <span>{run.name}</span>
-                    <small>{run.published ? "FINAL" : `${run.selectedSeats} seats`}</small>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </section>
-        <section
-          className={`shortlist-pane results-pane ${mobilePane === "results" ? "mobile-active" : ""}`}
-        >
-          <header>
-            <span>02 / RANKED TEAMS</span>
-            <Badge tone="neutral">{decision?.results.length ?? 0} results</Badge>
-          </header>
-          {decision?.quotaReports.length ? (
-            <div className="quota-report-strip">
-              {decision.quotaReports.map((report) => (
-                <p className={report.met ? "met" : "unmet"} key={JSON.stringify(report.quota)}>
-                  {report.message}
-                </p>
-              ))}
-            </div>
-          ) : (
-            <div className="unmapped-notice">
-              <span>NO QUOTAS</span>
-              <p>Selection is score order with participant-seat capacity only.</p>
-            </div>
-          )}
-          {shortlist.data.event.quotas.some((quota) => quota.attribute === "college") &&
-          shortlist.data.unmappedColleges.length > 0 ? (
-            <div className="unmapped-notice warning" role="alert">
-              <span>UNMAPPED COLLEGES</span>
-              <p>{shortlist.data.unmappedColleges.join(" · ")}</p>
-              <ActionLink to={`/organizer/events/${eventId}/requirements`} tone="quiet">
-                Map aliases before trusting this quota
-              </ActionLink>
-            </div>
-          ) : null}
-          <div className="shortlist-table">
-            <div className="shortlist-table-head">
-              <span>RANK / TEAM</span>
-              <span>FIT</span>
-              <span>DEPTH</span>
-              <span>NOVELTY</span>
-              <span>SCORE</span>
-              <span>STATE</span>
-            </div>
-            {decision?.results.length ? (
-              <div className="shortlist-result-rows">
-                {decision.results.map((result) => (
-                  <button
-                    type="button"
-                    className={
-                      selectedTeamId === result.teamId
-                        ? "shortlist-result selected"
-                        : "shortlist-result"
-                    }
-                    key={result.teamId}
-                    onClick={() => {
-                      setSelectedTeamId(result.teamId);
-                      setMobilePane("inspector");
-                    }}
-                  >
-                    <span>
-                      <b>{result.rank ? `#${result.rank}` : "—"}</b>
-                      <strong>{result.name}</strong>
-                      {result.borderline ? <em>review</em> : null}
-                    </span>
-                    <span>{Math.round(result.fit * 100)}%</span>
-                    <span>{result.depth.toFixed(2)}</span>
-                    <span>{result.novelty.toFixed(2)}</span>
-                    <span>{result.score.toFixed(1)}</span>
-                    <span data-status={result.status}>{result.status.replace("_", " ")}</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <EmptyState title="No submitted teams to rank">
-                Teams appear here only after captains submit a valid roster with completed profiles.
-              </EmptyState>
-            )}
-          </div>
-          <footer className="results-footer">
-            <span>Cutoff {decision?.cutoffScore?.toFixed(1) ?? "—"}</span>
-            <span>Borderline band ±3.0</span>
-            <span>
-              Selected {selectedCount} teams · {decision?.selectedSeats ?? 0} / {capacity} seats
-            </span>
-          </footer>
-        </section>
-        <section
-          className={`shortlist-pane inspector-pane ${mobilePane === "inspector" ? "mobile-active" : ""}`}
-        >
-          <header>
-            <span>03 / INSPECTOR</span>
-            <Badge tone={selectedResult?.status === "selected" ? "success" : "neutral"}>
-              {selectedResult?.status.replace("_", " ") ?? "No selection"}
-            </Badge>
-          </header>
-          <div className="pane-scroll">
-            {selectedResult && selectedTeam ? (
-              <div className="team-inspector">
-                <div className="inspector-scoreline">
-                  <span>{selectedResult.rank ? `#${selectedResult.rank}` : "INELIGIBLE"}</span>
-                  <strong>{selectedResult.name}</strong>
-                  <b>{selectedResult.score.toFixed(1)}</b>
-                </div>
-                <p className="decision-copy">
-                  {selectedResult.status === "selected"
-                    ? `Selected with ${selectedTeam.memberIds.length} seats.`
-                    : selectedResult.status === "waitlisted"
-                      ? `Waitlisted at position ${selectedResult.waitlistPosition}.`
-                      : selectedResult.status === "ineligible"
-                        ? selectedResult.ineligibleReasons.join(" ")
-                        : decision?.cutoffScore
-                          ? `${Math.max(0, decision.cutoffScore - selectedResult.score).toFixed(1)} points below the selected cutoff.`
-                          : "Not selected in the current run."}
-                </p>
-                {selectedResult.override ? (
-                  <div className="inspector-flag">
-                    <strong>OVERRIDE · {selectedResult.override.action.replace("_", " ")}</strong>
-                    <p>{selectedResult.override.reason}</p>
-                  </div>
-                ) : null}
-                {selectedResult.quotaSwap ? (
-                  <div className="inspector-flag warning">
-                    <strong>QUOTA SWAP · {selectedResult.quotaSwap}</strong>
-                    <p>This decision changed while satisfying a structured quota.</p>
-                  </div>
-                ) : null}
-                <div className="inspector-members">
-                  <span>MEMBERS</span>
-                  {selectedTeam.members.map((member) => (
-                    <div key={member.personId}>
-                      <strong>{member.name}</strong>
-                      <small>
-                        @{member.github} · {member.college ?? "College not provided"}
-                      </small>
-                    </div>
-                  ))}
-                </div>
-                <div className="breakdown-list">
-                  <span>REQUIREMENT BREAKDOWN</span>
-                  {selectedResult.breakdown.map((item) => {
-                    const bestMember = selectedTeam.members.find(
-                      (member) => member.personId === item.bestMemberId,
-                    );
-                    return (
-                      <article key={item.skill}>
-                        <div>
-                          <strong>
-                            {taxonomy.technologies[item.skill]?.label ??
-                              taxonomy.domains[item.skill]?.label ??
-                              item.skill}
-                          </strong>
-                          <b>
-                            {item.teamLevel.toFixed(1)} / {item.target.toFixed(1)}
-                          </b>
-                        </div>
-                        <p>
-                          {bestMember
-                            ? `Best evidence: ${bestMember.name}. `
-                            : "No member evidence. "}
-                          Lost {item.fitPointsLost.toFixed(1)} fit points.
-                        </p>
-                      </article>
-                    );
-                  })}
-                </div>
-                <div className="evidence-links">
-                  <span>EVIDENCE</span>
-                  {shortlist.data.profiles
-                    .filter((profile) => selectedTeam.memberIds.includes(profile.personId))
-                    .flatMap((profile) =>
-                      profile.skills.slice(0, 3).flatMap((skill) =>
-                        skill.evidence.slice(0, 2).map((evidence) => (
-                          <a
-                            href={`https://github.com/${evidence.repository}/blob/${evidence.commitSha}/${evidence.path}`}
-                            key={`${profile.personId}-${skill.id}-${evidence.repository}-${evidence.path}`}
-                            rel="noreferrer"
-                            target="_blank"
-                          >
-                            <strong>{evidence.path}</strong>
-                            <small>
-                              {profile.displayName} · {skill.id} · {evidence.commitSha.slice(0, 8)}
-                            </small>
-                          </a>
-                        )),
-                      ),
-                    )}
-                </div>
-                <div className="override-editor">
-                  <Field label="Override reason" hint="Required and stored in the run audit log.">
-                    <TextInput
-                      value={overrideReason}
-                      maxLength={500}
-                      onChange={(event) => setOverrideReason(event.target.value)}
-                      placeholder="Document the evidence-based reason"
-                    />
-                  </Field>
-                  <div>
-                    <ActionButton
-                      tone="secondary"
-                      disabled={overrideReason.trim().length < 3}
-                      onClick={() => addOverride("pin_in")}
-                    >
-                      Pin in
-                    </ActionButton>
-                    <ActionButton
-                      tone="danger"
-                      disabled={overrideReason.trim().length < 3}
-                      onClick={() => addOverride("pin_out")}
-                    >
-                      Pin out
-                    </ActionButton>
-                    {selectedOverride ? (
-                      <ActionButton
-                        tone="quiet"
-                        onClick={() =>
-                          setOverrides((current) =>
-                            current.filter((override) => override.teamId !== selectedTeamId),
-                          )
-                        }
-                      >
-                        Clear
-                      </ActionButton>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <EmptyState title="Select a team">
-                Choose a ranked row to inspect its evidence, score breakdown, and decision.
-              </EmptyState>
-            )}
-          </div>
-          <footer className="inspector-actions">
-            <span>
-              {overrides.length} logged override{overrides.length === 1 ? "" : "s"} in this draft
-            </span>
-          </footer>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-export function SavedRunPage() {
-  const { eventId, runId } = useParams();
-  const run = useQuery({
-    queryKey: ["organizer-shortlist-run", eventId, runId],
-    queryFn: () => getOrganizerShortlistRun(eventId ?? "", runId ?? ""),
-    enabled: Boolean(eventId && runId),
-    retry: false,
-  });
-
-  if (run.isPending) return <div className="loading-state">Loading frozen shortlist run…</div>;
-  if (run.isError || !run.data) {
-    return (
-      <div className="portal-page">
-        <EmptyState
-          title="Saved run not found"
-          action={
-            <ActionLink to={`/organizer/events/${eventId}/shortlist`}>Back to shortlist</ActionLink>
-          }
-        >
-          {run.error?.message ?? "This run does not exist or is outside your organizer workspace."}
-        </EmptyState>
-      </div>
-    );
-  }
-
-  const selected = run.data.results.filter((result) => result.status === "selected");
-  const waitlisted = run.data.results.filter((result) => result.status === "waitlisted");
-  return (
-    <div className="portal-page saved-run-page">
-      <PageHeading
-        eyebrow="ORGANIZER / SAVED RUN"
-        title={run.data.name}
-        description={`Immutable snapshot saved ${new Date(run.data.createdAt).toLocaleString("en-IN")} · ${run.data.published ? "published final" : "not published"}.`}
-        action={
-          <>
-            <ActionLink to={`/organizer/events/${eventId}/shortlist`} tone="secondary">
-              Back to workspace
-            </ActionLink>
-            <a
-              className="btn terminal-action action-primary"
-              href={`/api/organizer/events/${eventId}/shortlist/runs/${run.data.id}.csv`}
-            >
-              <span aria-hidden="true">[</span>
-              <span>Export CSV</span>
-              <span aria-hidden="true">]</span>
-            </a>
-          </>
-        }
-      />
-      <div className="metric-strip saved-run-metrics">
-        <div>
-          <span>SELECTED</span>
-          <strong>{selected.length}</strong>
-          <small>{run.data.selection.selectedSeats} participant seats</small>
-        </div>
-        <div>
-          <span>WAITLIST</span>
-          <strong>{waitlisted.length}</strong>
-          <small>{run.data.selection.waitlistSize} requested</small>
-        </div>
-        <div>
-          <span>CUTOFF</span>
-          <strong>{run.data.selection.cutoffScore?.toFixed(1) ?? "—"}</strong>
-          <small>Borderline band ±3.0</small>
-        </div>
-        <div>
-          <span>OVERRIDES</span>
-          <strong>{run.data.overrides.length}</strong>
-          <small>Reasoned and audited</small>
-        </div>
-      </div>
-      <div className="saved-run-grid">
-        <Panel label="01 / PARAMETERS" title="Frozen configuration">
-          <dl className="compact-definition-list run-parameters">
-            <div>
-              <dt>Capacity</dt>
-              <dd>{run.data.selection.capacity} seats</dd>
-            </div>
-            <div>
-              <dt>Fit / depth balance</dt>
-              <dd>{run.data.params.alpha.toFixed(2)}</dd>
-            </div>
-            <div>
-              <dt>Novelty weight</dt>
-              <dd>{run.data.params.noveltyWeight} points</dd>
-            </div>
-            <div>
-              <dt>Minimum fit</dt>
-              <dd>{Math.round(run.data.params.minFit * 100)}%</dd>
-            </div>
-          </dl>
-          <div className="run-requirements">
-            {run.data.params.requirements.map((requirement) => (
-              <article key={requirement.skill}>
-                <strong>
-                  {taxonomy.technologies[requirement.skill]?.label ??
-                    taxonomy.domains[requirement.skill]?.label ??
-                    requirement.skill}
-                </strong>
-                <span>
-                  target {requirement.target.toFixed(1)} · weight {requirement.weight}
-                </span>
-              </article>
-            ))}
-          </div>
-          {run.data.quotaReports.length ? (
-            <div className="quota-report-strip run-quota-reports">
-              {run.data.quotaReports.map((report) => (
-                <p className={report.met ? "met" : "unmet"} key={JSON.stringify(report.quota)}>
-                  {report.message}
-                </p>
-              ))}
-            </div>
-          ) : (
-            <p className="muted-copy">No quota rules were applied to this run.</p>
-          )}
-        </Panel>
-        <Panel label="02 / AUDIT" title="Overrides and quota swaps">
-          {run.data.overrides.length === 0 && run.data.swaps.length === 0 ? (
-            <EmptyState title="No manual or quota changes">
-              Final order came directly from score ranking and seat capacity.
-            </EmptyState>
-          ) : (
-            <div className="run-audit-list">
-              {run.data.overrides.map((override) => (
-                <article key={`${override.teamId}-${override.at}`}>
-                  <Badge tone="warning">{override.action.replace("_", " ")}</Badge>
-                  <strong>{override.reason}</strong>
-                  <small>{new Date(override.at).toLocaleString("en-IN")}</small>
-                </article>
-              ))}
-              {run.data.swaps.map((swap) => (
-                <article key={`${swap.addedTeamId}-${swap.removedTeamId}`}>
-                  <Badge tone="neutral">quota swap</Badge>
-                  <strong>{swap.message}</strong>
-                </article>
-              ))}
-            </div>
-          )}
-        </Panel>
-      </div>
-      <Panel label="03 / ORDERED RESULTS" title={`${run.data.results.length} ranked teams`}>
-        <table className="saved-run-table">
-          <caption className="sr-only">Frozen shortlist results</caption>
-          <thead>
-            <tr className="saved-run-row saved-run-head">
-              <th scope="col">Rank / team</th>
-              <th scope="col">Fit</th>
-              <th scope="col">Depth</th>
-              <th scope="col">Novelty</th>
-              <th scope="col">Score</th>
-              <th scope="col">Decision</th>
-            </tr>
-          </thead>
-          <tbody>
-            {run.data.results.map((result) => (
-              <tr className="saved-run-row" key={result.teamId}>
-                <th scope="row">
-                  <b>{result.rank ? `#${result.rank}` : "—"}</b>
-                  <strong>{result.name}</strong>
-                  <small>{result.memberIds.length} members</small>
-                </th>
-                <td>{Math.round(result.fit * 100)}%</td>
-                <td>{result.depth.toFixed(2)}</td>
-                <td>{result.novelty.toFixed(2)}</td>
-                <td>{result.score.toFixed(1)}</td>
-                <td data-status={result.status}>{result.status.replace("_", " ")}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Panel>
     </div>
   );
 }

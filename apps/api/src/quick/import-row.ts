@@ -4,6 +4,7 @@ import { decryptSecret } from "../auth/crypto.js";
 import type { UserDocument } from "../database/models.js";
 import { collections } from "../database/mongo.js";
 import { enqueueJob } from "../jobs/queue.js";
+import { githubFetch } from "../jobs/rate-limit.js";
 import type { JobContext } from "../jobs/worker.js";
 
 const ImportRowPayloadSchema = z.object({
@@ -27,6 +28,54 @@ const GithubRepositorySchema = z.object({
   pushed_at: z.iso.datetime({ offset: true }).nullable(),
 });
 
+/**
+ * The spec's repo choice for people nobody signed in for: the 6 most recently pushed non-fork,
+ * non-archived public repositories under 50 MB, skipping the profile README repository.
+ */
+export async function selectRecentRepositories(
+  login: string,
+  token: string,
+  fetchImplementation: typeof fetch = githubFetch,
+): Promise<Array<{ fullName: string; pushedAt: string; fork: boolean }>> {
+  const response = await fetchImplementation(
+    `https://api.github.com/users/${encodeURIComponent(login)}/repos?per_page=100&sort=pushed&direction=desc&type=owner`,
+    {
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${token}`,
+        "x-github-api-version": "2026-03-10",
+      },
+    },
+  );
+  if (!response.ok) {
+    const reset = response.headers.get("x-ratelimit-reset");
+    throw new Error(
+      response.status === 404
+        ? `GitHub user @${login} was not found`
+        : response.status === 403 || response.status === 429
+          ? `GitHub rate limited the import${reset ? ` until ${new Date(Number(reset) * 1000).toISOString()}` : ""}`
+          : `GitHub returned ${response.status} for @${login}`,
+    );
+  }
+  const parsed = z.array(GithubRepositorySchema).parse(await response.json());
+  return parsed
+    .filter(
+      (repository) =>
+        !repository.fork &&
+        !repository.archived &&
+        repository.size > 0 &&
+        repository.size <= 51_200 &&
+        repository.pushed_at &&
+        repository.name.toLowerCase() !== login.toLowerCase(),
+    )
+    .slice(0, 6)
+    .map((repository) => ({
+      fullName: repository.full_name,
+      pushedAt: repository.pushed_at ?? "",
+      fork: repository.fork,
+    }));
+}
+
 export function createImportRowHandler(db: Db, sessionSecret: string) {
   return async ({ job, progress }: JobContext): Promise<Record<string, unknown>> => {
     const payload = ImportRowPayloadSchema.parse(job.payload);
@@ -35,52 +84,14 @@ export function createImportRowHandler(db: Db, sessionSecret: string) {
       .findOne({ _id: ObjectId.createFromHexString(payload.accessUserId) });
     if (!accessUser) throw new Error("Import owner no longer exists");
 
-    const repositories: Array<{ fullName: string; pushedAt: string; fork: boolean }> = [];
+    const repositories: Awaited<ReturnType<typeof selectRecentRepositories>> = [];
     if (payload.github) {
       await progress(
         "import.github.started",
         `Finding recent public repositories for @${payload.github}`,
       );
       const token = decryptSecret(accessUser.encryptedAccessToken, sessionSecret);
-      const response = await fetch(
-        `https://api.github.com/users/${encodeURIComponent(payload.github)}/repos?per_page=100&sort=pushed&direction=desc&type=owner`,
-        {
-          headers: {
-            accept: "application/vnd.github+json",
-            authorization: `Bearer ${token}`,
-            "x-github-api-version": "2026-03-10",
-          },
-        },
-      );
-      if (!response.ok) {
-        const reset = response.headers.get("x-ratelimit-reset");
-        throw new Error(
-          response.status === 404
-            ? `GitHub user @${payload.github} was not found`
-            : response.status === 403 || response.status === 429
-              ? `GitHub rate limited the import${reset ? ` until ${new Date(Number(reset) * 1000).toISOString()}` : ""}`
-              : `GitHub returned ${response.status} for @${payload.github}`,
-        );
-      }
-      const parsed = z.array(GithubRepositorySchema).parse(await response.json());
-      repositories.push(
-        ...parsed
-          .filter(
-            (repository) =>
-              !repository.fork &&
-              !repository.archived &&
-              repository.size > 0 &&
-              repository.size <= 51_200 &&
-              repository.pushed_at &&
-              repository.name.toLowerCase() !== payload.github?.toLowerCase(),
-          )
-          .slice(0, 6)
-          .map((repository) => ({
-            fullName: repository.full_name,
-            pushedAt: repository.pushed_at ?? "",
-            fork: repository.fork,
-          })),
-      );
+      repositories.push(...(await selectRecentRepositories(payload.github, token)));
       await progress(
         "import.github.completed",
         `Selected ${repositories.length} recent non-fork repositories for @${payload.github}`,
@@ -118,22 +129,32 @@ export function createImportRowHandler(db: Db, sessionSecret: string) {
 
     await Promise.all([
       ...repositories.map((repository) =>
-        enqueueJob(db, "fetch_repo", {
-          profileId: payload.profileId,
-          personId: payload.personId,
-          accessUserId: payload.accessUserId,
-          repository: repository.fullName,
-          pushedAt: repository.pushedAt,
-          fork: repository.fork,
-        }),
+        enqueueJob(
+          db,
+          "fetch_repo",
+          {
+            profileId: payload.profileId,
+            personId: payload.personId,
+            accessUserId: payload.accessUserId,
+            repository: repository.fullName,
+            pushedAt: repository.pushedAt,
+            fork: repository.fork,
+          },
+          { dedupeKey: `${payload.profileId}:fetch_repo:${repository.fullName}` },
+        ),
       ),
       ...(payload.cvFileId
         ? [
-            enqueueJob(db, "render_cv", {
-              profileId: payload.profileId,
-              personId: payload.personId,
-              fileId: payload.cvFileId,
-            }),
+            enqueueJob(
+              db,
+              "render_cv",
+              {
+                profileId: payload.profileId,
+                personId: payload.personId,
+                fileId: payload.cvFileId,
+              },
+              { dedupeKey: `${payload.profileId}:render_cv` },
+            ),
           ]
         : []),
     ]);

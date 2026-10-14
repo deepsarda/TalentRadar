@@ -42,17 +42,27 @@ function objectKeys(value: unknown): string[] {
   return value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
 }
 
-function npmPackages(files: Record<string, string>): Set<string> {
-  const manifest = parseJson(files["package.json"]);
-  return new Set(
-    ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"].flatMap((key) =>
-      objectKeys(manifest?.[key]).map(normalize),
-    ),
+/** Every file with this basename, at any depth: monorepos keep manifests in subfolders. */
+function filesNamed(files: Record<string, string>, basename: string): string[] {
+  return Object.entries(files).flatMap(([path, content]) =>
+    path === basename || path.endsWith(`/${basename}`) ? [content] : [],
   );
 }
 
+function npmPackages(files: Record<string, string>): Set<string> {
+  return jsonSectionNames(files, "package.json", [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+  ]);
+}
+
 function pythonPackages(files: Record<string, string>): Set<string> {
-  const content = [files["requirements.txt"], files["pyproject.toml"]].filter(Boolean).join("\n");
+  const content = [
+    ...filesNamed(files, "requirements.txt"),
+    ...filesNamed(files, "pyproject.toml"),
+  ].join("\n");
   return new Set(
     content
       .split(/\r?\n/)
@@ -62,8 +72,8 @@ function pythonPackages(files: Record<string, string>): Set<string> {
   );
 }
 
-function quotedManifestNames(content: string | undefined): Set<string> {
-  if (!content) return new Set();
+function quotedManifestNames(files: Record<string, string>, fileName: string): Set<string> {
+  const content = filesNamed(files, fileName).join("\n");
   return new Set(
     [...content.matchAll(/["']([^"']+)["']\s*(?:=|,|\))/g)].map((match) =>
       normalize(match[1] ?? ""),
@@ -76,8 +86,12 @@ function jsonSectionNames(
   fileName: string,
   sections: string[],
 ): Set<string> {
-  const manifest = parseJson(files[fileName]);
-  return new Set(sections.flatMap((section) => objectKeys(manifest?.[section]).map(normalize)));
+  return new Set(
+    filesNamed(files, fileName).flatMap((content) => {
+      const manifest = parseJson(content);
+      return sections.flatMap((section) => objectKeys(manifest?.[section]).map(normalize));
+    }),
+  );
 }
 
 export function detectTechnologies(
@@ -96,9 +110,8 @@ export function detectTechnologies(
   const ecosystems: Record<string, Set<string>> = {
     npm: npmPackages(normalizedFiles),
     pip: pythonPackages(normalizedFiles),
-    cargo: quotedManifestNames(normalizedFiles["cargo.toml"]),
-    // biome-ignore lint/complexity/useLiteralKeys: File maps intentionally use an index signature.
-    gem: quotedManifestNames(normalizedFiles["gemfile"]),
+    cargo: quotedManifestNames(normalizedFiles, "cargo.toml"),
+    gem: quotedManifestNames(normalizedFiles, "gemfile"),
     composer: jsonSectionNames(normalizedFiles, "composer.json", ["require", "require-dev"]),
     maven: new Set(),
     gradle: new Set(),
@@ -121,7 +134,9 @@ export function detectTechnologies(
           reasons.push(`extension:${value}`);
         } else if (
           detector === "files" &&
-          (basenames.has(value.toLowerCase()) || paths.includes(value.toLowerCase()))
+          (value.startsWith("*.")
+            ? paths.some((path) => path.endsWith(value.slice(1).toLowerCase()))
+            : basenames.has(value.toLowerCase()) || paths.includes(value.toLowerCase()))
         ) {
           reasons.push(`file:${value}`);
         } else if (

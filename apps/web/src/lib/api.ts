@@ -53,6 +53,8 @@ export interface OrganizerEventSummary {
   slug: string;
   name: string;
   visibility: "draft" | "published" | "closed";
+  /** Drafts only: the first wizard step still needed before publishing. */
+  missing?: "dates" | "requirements";
   registrationClosesAt?: string;
   eventStartsAt?: string;
   updatedAt: string;
@@ -60,6 +62,8 @@ export interface OrganizerEventSummary {
 
 export interface OrganizerEventDetails extends OrganizerEventSummary {
   tagline: string;
+  logoUrl?: string;
+  bannerUrl?: string;
   description: string;
   mode: "in_person" | "online" | "hybrid";
   venue?: string;
@@ -301,6 +305,8 @@ export interface OrganizerShortlistData {
   teams: OrganizerShortlistTeam[];
   rankingTeams: Team[];
   unmappedColleges: string[];
+  /** Per team: why it is ineligible beyond what rank() sees (e.g. no team in the import). */
+  ineligibleNotes?: Record<string, string>;
   runs: Array<{
     id: string;
     name: string;
@@ -329,6 +335,47 @@ export interface OrganizerShortlistRun {
   published: boolean;
   publishedAt?: string;
   createdAt: string;
+  /** The evidence the run was decided on; null for runs saved before snapshots existed. */
+  snapshot: ShortlistRunSnapshot | null;
+}
+
+export interface ShortlistRunPerson {
+  personId: string;
+  name: string;
+  email?: string;
+  github: string;
+  verified: boolean;
+  college?: string;
+  collegeNormalized?: string;
+  year?: string;
+  branch?: string;
+  profileStatus: "pending" | "building" | "ready" | "failed";
+  profile: {
+    profileId: string;
+    version: number;
+    skills: ProfileSkill[];
+    novelty: number;
+    flags: PersonProfile["flags"];
+    taxonomyVersion: string;
+    promptVersion?: string;
+    model?: string;
+    builtAt?: string;
+  } | null;
+}
+
+export interface ShortlistRunSnapshot {
+  versions: { taxonomy: string; rubric?: string; prompts: string[] };
+  teams: Array<Team & { unteamed?: boolean }>;
+  people: ShortlistRunPerson[];
+}
+
+export interface ProfileFailure {
+  profileId: string;
+  personId: string;
+  name: string;
+  github: string;
+  error: string;
+  jobs: Array<{ type: string; error: string }>;
 }
 
 export interface QuickCsvInspection {
@@ -408,8 +455,100 @@ export async function getOrganizerEvents(): Promise<OrganizerEventSummary[]> {
   return response.events;
 }
 
+export type EventDraftDetails = Pick<
+  CreateEventInput,
+  "name" | "slug" | "tagline" | "description" | "logoUrl" | "bannerUrl" | "links" | "mode" | "venue"
+>;
+
+/** One wizard step, validated and stored on its own. */
+export type EventDraftStep =
+  | ({ step: "details" } & EventDraftDetails)
+  | { step: "dates"; timeline: CreateEventInput["timeline"] }
+  | { step: "teams"; teamSize: CreateEventInput["teamSize"]; capacity: number }
+  | { step: "requirements"; requirements: CreateEventInput["requirements"] }
+  | { step: "quotas"; quotas: QuotaRule[]; collegeAliases: Record<string, string[]> };
+
+export interface AuditEntry {
+  id: string;
+  action: string;
+  actor: string;
+  changes: string[];
+  note?: string;
+  at: string;
+}
+
+export type CorrectionReason = "not_my_repo" | "missing_repo" | "level_off";
+
+export interface OrganizerCorrection {
+  id: string;
+  personId: string;
+  name: string;
+  github: string;
+  skill: string;
+  reason: CorrectionReason;
+  note?: string;
+  profileVersion: number;
+  createdAt: string;
+}
+
+export async function saveOrganizerEventDraft(
+  eventId: string,
+  input: EventDraftStep,
+): Promise<OrganizerEventDetails> {
+  const response = await apiRequest<{ event: OrganizerEventDetails }>(
+    `/api/organizer/events/${eventId}/draft`,
+    { method: "PATCH", body: JSON.stringify(input) },
+  );
+  return response.event;
+}
+
+export async function unpublishOrganizerEvent(eventId: string): Promise<OrganizerEventSummary> {
+  const response = await apiRequest<{ event: OrganizerEventSummary }>(
+    `/api/organizer/events/${eventId}/unpublish`,
+    { method: "POST" },
+  );
+  return response.event;
+}
+
+export async function getOrganizerEventAudit(eventId: string): Promise<AuditEntry[]> {
+  const response = await apiRequest<{ entries: AuditEntry[] }>(
+    `/api/organizer/events/${eventId}/audit`,
+  );
+  return response.entries;
+}
+
+export async function getOrganizerCorrections(eventId: string): Promise<OrganizerCorrection[]> {
+  const response = await apiRequest<{ corrections: OrganizerCorrection[] }>(
+    `/api/organizer/events/${eventId}/corrections`,
+  );
+  return response.corrections;
+}
+
+export async function resolveOrganizerCorrection(
+  eventId: string,
+  correctionId: string,
+  input: { outcome: "resolved" | "dismissed"; note?: string },
+): Promise<void> {
+  await apiRequest(`/api/organizer/events/${eventId}/corrections/${correctionId}`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function reportProfileProblem(input: {
+  skill: string;
+  reason: CorrectionReason;
+  note?: string;
+}): Promise<void> {
+  await apiRequest("/api/participant/profile/corrections", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+/** Creates a draft from the details step; any later steps included are stored too. */
 export async function createOrganizerEvent(
-  input: CreateEventInput,
+  input: EventDraftDetails & Partial<CreateEventInput>,
 ): Promise<OrganizerEventSummary> {
   const response = await apiRequest<{ event: OrganizerEventSummary }>("/api/organizer/events", {
     method: "POST",
@@ -474,10 +613,18 @@ export async function getParticipantApplication(
   return response.application;
 }
 
+/** Details found in the CV's text layer; a field is present only when the CV states it. */
+export interface CvDetails {
+  name?: string;
+  college?: string;
+  year?: string;
+  branch?: string;
+}
+
 export async function uploadParticipantCv(
   file: File,
-): Promise<{ id: string; name: string; size: number }> {
-  const response = await apiRequest<{ cv: { id: string; name: string; size: number } }>(
+): Promise<{ cv: { id: string; name: string; size: number }; details: CvDetails }> {
+  return apiRequest<{ cv: { id: string; name: string; size: number }; details: CvDetails }>(
     "/api/participant/cv",
     {
       method: "POST",
@@ -488,7 +635,27 @@ export async function uploadParticipantCv(
       body: file,
     },
   );
-  return response.cv;
+}
+
+/** Re-runs the profile build with the current CV and the last chosen repositories. */
+export async function rebuildParticipantProfile(): Promise<{
+  profile: { id: string; status: string; version: number; reused: boolean };
+}> {
+  return apiRequest("/api/participant/profile/rebuild", { method: "POST" });
+}
+
+/** Served as a JSON attachment, so a plain link downloads it. */
+export const participantDataExportUrl = "/api/participant/data/export";
+
+export async function revokeGithubAccess(): Promise<void> {
+  await apiRequest<void>("/auth/github/revoke", { method: "POST" });
+}
+
+export async function deleteParticipantAccount(): Promise<{ githubRevoked: boolean }> {
+  return apiRequest("/api/participant/data/delete", {
+    method: "POST",
+    body: JSON.stringify({ confirm: "delete" }),
+  });
 }
 
 export async function submitParticipantApplication(
@@ -497,7 +664,6 @@ export async function submitParticipantApplication(
     details: { name: string; college: string; year: string; branch: string };
     repositories: string[];
     consent: true;
-    syntheticCv: boolean;
   },
 ): Promise<{
   application: { id: string; status: string };
@@ -509,14 +675,8 @@ export async function submitParticipantApplication(
   });
 }
 
-export async function getRuntimeConfig(): Promise<{
-  modelDataPolicy: "synthetic_only" | "paid_private";
-}> {
-  return apiRequest("/api/config");
-}
-
-export async function getParticipantTeam(): Promise<ParticipantTeamContext> {
-  return apiRequest("/api/participant/team");
+export async function getParticipantTeam(eventId: string): Promise<ParticipantTeamContext> {
+  return apiRequest(`/api/participant/team?eventId=${encodeURIComponent(eventId)}`);
 }
 
 export async function createParticipantTeam(
@@ -538,12 +698,15 @@ export async function joinParticipantTeam(inviteCode: string): Promise<Participa
   return response.team;
 }
 
-export async function setParticipantLookingForTeam(lookingForTeam: boolean): Promise<boolean> {
+export async function setParticipantLookingForTeam(
+  eventId: string,
+  lookingForTeam: boolean,
+): Promise<boolean> {
   const response = await apiRequest<{ lookingForTeam: boolean }>(
     "/api/participant/team/looking-for-team",
     {
       method: "PATCH",
-      body: JSON.stringify({ lookingForTeam }),
+      body: JSON.stringify({ eventId, lookingForTeam }),
     },
   );
   return response.lookingForTeam;
@@ -578,6 +741,58 @@ export async function removeParticipantTeamMember(
 
 export async function leaveParticipantTeam(teamId: string): Promise<void> {
   await apiRequest<void>(`/api/participant/teams/${teamId}/leave`, { method: "POST" });
+}
+
+export interface ParticipantRsvp {
+  status: ParticipantApplicationDetails["status"];
+  rsvpDeadlineAt: string | null;
+  canRespond: boolean;
+}
+
+export async function getParticipantRsvp(applicationId: string): Promise<ParticipantRsvp> {
+  const response = await apiRequest<{ rsvp: ParticipantRsvp }>(
+    `/api/participant/applications/${applicationId}/rsvp`,
+  );
+  return response.rsvp;
+}
+
+export async function respondParticipantRsvp(
+  applicationId: string,
+  answer: "confirm" | "decline",
+): Promise<ParticipantRsvp> {
+  const response = await apiRequest<{ rsvp: ParticipantRsvp }>(
+    `/api/participant/applications/${applicationId}/rsvp`,
+    { method: "POST", body: JSON.stringify({ response: answer }) },
+  );
+  return response.rsvp;
+}
+
+export interface TeamFitRow {
+  skill: string;
+  target: number;
+  level: number;
+  best: { id: string; name: string } | null;
+  covered: boolean;
+}
+
+export async function getParticipantTeamFit(teamId: string): Promise<TeamFitRow[]> {
+  const response = await apiRequest<{ fit: TeamFitRow[] }>(`/api/participant/teams/${teamId}/fit`);
+  return response.fit;
+}
+
+export interface TeammateSuggestion {
+  id: string;
+  name: string;
+  college?: string;
+  topSkills: Array<{ id: string; level: number }>;
+  fills: string[];
+}
+
+export async function getTeammateSuggestions(eventId: string): Promise<TeammateSuggestion[]> {
+  const response = await apiRequest<{ suggestions: TeammateSuggestion[] }>(
+    `/api/participant/teammates?eventId=${encodeURIComponent(eventId)}`,
+  );
+  return response.suggestions;
 }
 
 export async function getOrganizerShortlist(eventId: string): Promise<OrganizerShortlistData> {
@@ -673,6 +888,48 @@ export async function startQuickImport(
     body: JSON.stringify({ mapping, consent: true }),
   });
   return response.import;
+}
+
+export async function getProfileFailures(eventId: string): Promise<ProfileFailure[]> {
+  const response = await apiRequest<{ failures: ProfileFailure[] }>(
+    `/api/organizer/events/${eventId}/shortlist/failures`,
+  );
+  return response.failures;
+}
+
+export async function retryProfileFailure(eventId: string, profileId: string): Promise<void> {
+  await apiRequest(`/api/organizer/events/${eventId}/shortlist/failures/${profileId}/retry`, {
+    method: "POST",
+  });
+}
+
+export interface PromoteQuickInput {
+  slug: string;
+  tagline: string;
+  description: string;
+  mode: "in_person" | "online" | "hybrid";
+  venue?: string;
+  links?: Array<{ label: string; url: string }>;
+  timeline: {
+    timezone: string;
+    registrationOpensAt: string;
+    registrationClosesAt: string;
+    shortlistPublishesAt: string;
+    rsvpDeadlineAt: string;
+    eventStartsAt: string;
+    eventEndsAt: string;
+  };
+}
+
+export async function promoteQuickShortlist(
+  quickId: string,
+  input: PromoteQuickInput,
+): Promise<{ id: string; slug: string }> {
+  const response = await apiRequest<{ event: { id: string; slug: string } }>(
+    `/api/organizer/quick/${quickId}/promote`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return response.event;
 }
 
 export async function getQuickImport(quickId: string): Promise<QuickImportStatus> {

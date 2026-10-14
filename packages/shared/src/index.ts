@@ -32,3 +32,9 @@ export {
 export { originalityRubric, proficiencyRubric } from "./taxonomy/rubrics.js";
 export type { Taxonomy } from "./taxonomy/taxonomy.js";
 export { TaxonomySchema, taxonomy, taxonomyIds } from "./taxonomy/taxonomy.js";
+export {
+  promptVersion,
+  rubricVersion,
+  samplerVersion,
+  taxonomyVersion,
+} from "./taxonomy/versions.js";

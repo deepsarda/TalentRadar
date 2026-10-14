@@ -1,11 +1,17 @@
 import type { Express, Request } from "express";
-import type { Db } from "mongodb";
+import { type Db, ObjectId } from "mongodb";
 import { z } from "zod";
 import type { Environment } from "../config/environment.js";
 import type { OAuthStateDocument, PersonDocument, UserDocument } from "../database/models.js";
 import { collections } from "../database/mongo.js";
-import { encryptSecret, hashToken, pkceChallenge, randomToken } from "./crypto.js";
-import { type CurrentUser, createSession, destroySession, readCurrentUser } from "./session.js";
+import { decryptSecret, encryptSecret, hashToken, pkceChallenge, randomToken } from "./crypto.js";
+import {
+  type CurrentUser,
+  createSession,
+  destroyAllSessions,
+  destroySession,
+  readCurrentUser,
+} from "./session.js";
 
 const OAuthCallbackSchema = z.object({
   code: z.string().min(1),
@@ -43,7 +49,7 @@ function safeReturnTo(value: unknown): string {
   return value.slice(0, 2048);
 }
 
-function appOrigin(environment: Environment): string {
+export function appOrigin(environment: Environment): string {
   return (
     environment.APP_ORIGIN ??
     environment.RENDER_EXTERNAL_URL ??
@@ -55,7 +61,7 @@ function callbackUrl(environment: Environment): string {
   return new URL("/auth/github/callback", appOrigin(environment)).toString();
 }
 
-function isSecure(environment: Environment): boolean {
+export function isSecure(environment: Environment): boolean {
   return environment.NODE_ENV === "production" || appOrigin(environment).startsWith("https:");
 }
 
@@ -69,6 +75,45 @@ async function readJson(response: Response): Promise<unknown> {
     throw new Error(message);
   }
   return body;
+}
+
+/** Same-origin check for state-changing cookie requests; browsers always send Origin on POST. */
+export function trustedOrigin(request: Request, environment: Environment): boolean {
+  const origin = request.headers.origin;
+  return !origin || origin === appOrigin(environment);
+}
+
+/**
+ * Revokes the OAuth grant at GitHub (DELETE /applications/{client_id}/token, basic auth with the
+ * app's client credentials). A 404 means GitHub no longer knows the token, which is the goal.
+ */
+export async function revokeGithubToken(
+  environment: Environment,
+  encryptedAccessToken: string | undefined,
+  fetchImplementation: typeof fetch = fetch,
+): Promise<void> {
+  const { GITHUB_CLIENT_ID: clientId, GITHUB_CLIENT_SECRET: clientSecret } = environment;
+  const sessionSecret = environment.SESSION_SECRET;
+  if (!clientId || !clientSecret || !sessionSecret) {
+    throw new Error("GitHub revocation requires client credentials and a session secret");
+  }
+  if (encryptedAccessToken === undefined) return;
+  const response = await fetchImplementation(
+    `https://api.github.com/applications/${encodeURIComponent(clientId)}/token`,
+    {
+      method: "DELETE",
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+        "content-type": "application/json",
+        "x-github-api-version": GITHUB_API_VERSION,
+      },
+      body: JSON.stringify({ access_token: decryptSecret(encryptedAccessToken, sessionSecret) }),
+    },
+  );
+  if (response.status !== 204 && response.status !== 404) {
+    throw new Error(`GitHub token revocation failed with ${response.status}`);
+  }
 }
 
 export interface Authentication {
@@ -214,9 +259,53 @@ export function createGithubAuthentication(
         }
       });
 
+      app.post("/auth/github/revoke", async (request, response) => {
+        if (!trustedOrigin(request, environment)) {
+          response
+            .status(403)
+            .json({ error: "untrusted_origin", message: "Request origin is not allowed" });
+          return;
+        }
+        const current = await readCurrentUser(db, request);
+        if (!current) {
+          response
+            .status(401)
+            .json({ error: "authentication_required", message: "Sign in to revoke access" });
+          return;
+        }
+        const users = db.collection<UserDocument>(collections.users);
+        const user = await users.findOne({ _id: ObjectId.createFromHexString(current.id) });
+        if (!user) {
+          response
+            .status(401)
+            .json({ error: "account_not_found", message: "Account session is no longer valid" });
+          return;
+        }
+        try {
+          await revokeGithubToken(environment, user.encryptedAccessToken, fetchImplementation);
+        } catch (error) {
+          // Keep the stored token: telling the person access is gone while GitHub still honours
+          // the grant would be a lie. They can retry, or revoke it in GitHub settings.
+          console.error(
+            "GitHub token revocation failed",
+            error instanceof Error ? error.message : "unknown error",
+          );
+          response.status(502).json({
+            error: "github_revoke_failed",
+            message: "GitHub did not confirm the revocation; try again",
+          });
+          return;
+        }
+        await users.updateOne(
+          { _id: user._id },
+          { $unset: { encryptedAccessToken: "" }, $set: { updatedAt: new Date() } },
+        );
+        await destroyAllSessions(db, user._id, response, isSecure(environment));
+        response.status(204).end();
+      });
+
       app.post("/auth/logout", async (request, response) => {
-        const origin = request.headers.origin;
-        if (origin && origin !== appOrigin(environment)) {
+        if (!trustedOrigin(request, environment)) {
           response
             .status(403)
             .json({ error: "untrusted_origin", message: "Request origin is not allowed" });

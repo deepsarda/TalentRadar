@@ -1,5 +1,5 @@
-import { lazy } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { lazy, Suspense } from "react";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { TerminalFrame } from "./layouts/TerminalFrame";
 
 const LandingPage = lazy(() =>
@@ -30,11 +30,10 @@ const ParticipantOnboarding = lazy(() =>
 const ParticipantProfilePage = lazy(() =>
   import("./pages/ParticipantPages").then((module) => ({ default: module.ParticipantProfilePage })),
 );
-const ParticipantTeamPage = lazy(() =>
-  import("./pages/ParticipantPages").then((module) => ({ default: module.ParticipantTeamPage })),
-);
-const ParticipantStatusPage = lazy(() =>
-  import("./pages/ParticipantPages").then((module) => ({ default: module.ParticipantStatusPage })),
+const ParticipantApplicationPage = lazy(() =>
+  import("./pages/ParticipantPages").then((module) => ({
+    default: module.ParticipantApplicationPage,
+  })),
 );
 const ParticipantDataPage = lazy(() =>
   import("./pages/ParticipantPages").then((module) => ({ default: module.ParticipantDataPage })),
@@ -53,10 +52,13 @@ const EventSectionPage = lazy(() =>
   import("./pages/OrganizerPages").then((module) => ({ default: module.EventSectionPage })),
 );
 const ShortlistWorkspacePage = lazy(() =>
-  import("./pages/OrganizerPages").then((module) => ({ default: module.ShortlistWorkspacePage })),
+  import("./pages/ShortlistPages").then((module) => ({ default: module.ShortlistWorkspacePage })),
 );
 const SavedRunPage = lazy(() =>
-  import("./pages/OrganizerPages").then((module) => ({ default: module.SavedRunPage })),
+  import("./pages/ShortlistPages").then((module) => ({ default: module.SavedRunPage })),
+);
+const PrintRunPage = lazy(() =>
+  import("./pages/ShortlistPages").then((module) => ({ default: module.PrintRunPage })),
 );
 const QuickShortlistPage = lazy(() =>
   import("./pages/OrganizerPages").then((module) => ({ default: module.QuickShortlistPage })),
@@ -66,6 +68,15 @@ export function App() {
   return (
     <BrowserRouter>
       <Routes>
+        {/* Print view: black on white, outside the terminal frame. */}
+        <Route
+          path="organizer/events/:eventId/runs/:runId/print"
+          element={
+            <Suspense fallback={null}>
+              <PrintRunPage />
+            </Suspense>
+          }
+        />
         <Route element={<TerminalFrame />}>
           <Route index element={<LandingPage />} />
           <Route path="h/:slug" element={<PublicEventPage />} />
@@ -77,11 +88,16 @@ export function App() {
           <Route path="participant/onboarding" element={<ParticipantOnboarding />} />
           <Route path="participant/apply/:slug" element={<ParticipantOnboarding />} />
           <Route path="participant/profile" element={<ParticipantProfilePage />} />
-          <Route path="participant/team/:teamId" element={<ParticipantTeamPage />} />
+          <Route
+            path="participant/applications/:applicationId"
+            element={<ParticipantApplicationPage />}
+          />
+          {/* Old links: status used to be its own page, and team had a single global page. */}
           <Route
             path="participant/applications/:applicationId/status"
-            element={<ParticipantStatusPage />}
+            element={<ParticipantApplicationPage />}
           />
+          <Route path="participant/team/*" element={<Navigate to="/participant" replace />} />
           <Route path="participant/settings/data" element={<ParticipantDataPage />} />
 
           <Route path="organizer" element={<OrganizerDashboard />} />

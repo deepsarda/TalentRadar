@@ -4,13 +4,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { RequirementSchema, taxonomy } from "@talentradar/shared";
+import {
+  HackathonSchema,
+  HackathonTimelineSchema,
+  RequirementSchema,
+  rubricVersion,
+  taxonomyVersion,
+} from "@talentradar/shared";
 import type { Express, Request, Response } from "express";
 import express from "express";
 import {
   type Db,
   GridFSBucket,
   type GridFSBucketWriteStream,
+  MongoServerError,
   ObjectId,
   type ObjectId as ObjectIdType,
 } from "mongodb";
@@ -29,7 +36,7 @@ import type {
   TeamDocument,
 } from "../database/models.js";
 import { collections } from "../database/mongo.js";
-import type { ApiModule } from "../events/organizer-events.js";
+import { type ApiModule, detailsFields, requireVenue } from "../events/organizer-events.js";
 import { enqueueJob } from "../jobs/queue.js";
 
 const CreateQuickSchema = z.object({
@@ -68,11 +75,27 @@ const ImportRowSchema = z.object({
   city: z.string().trim().max(120).optional(),
 });
 
+/**
+ * What a quick run lacks to become a full event: its public page fields and timeline. Name,
+ * team size, capacity, requirements, people, profiles and runs carry over unchanged. Field rules
+ * are the event wizard's own, so a promoted event can never be something the wizard rejects.
+ */
+const PromoteQuickSchema = z
+  .object({
+    slug: detailsFields.slug,
+    tagline: detailsFields.tagline,
+    description: detailsFields.description,
+    links: detailsFields.links,
+    mode: detailsFields.mode,
+    venue: detailsFields.venue,
+    timeline: HackathonTimelineSchema,
+  })
+  .superRefine(requireVenue);
+
 const MAX_CSV_BYTES = 10 * 1024 * 1024;
 const MAX_ZIP_BYTES = 200 * 1024 * 1024;
 const MAX_CV_BYTES = 2 * 1024 * 1024;
 const MAX_ZIP_ENTRIES = 5_000;
-const CV_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const inviteAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
 interface ParsedImportRow extends z.infer<typeof ImportRowSchema> {
@@ -323,7 +346,6 @@ async function matchArchiveCvs(
           sourceEntry: entry.fileName,
           sha256: createHash("sha256").update(buffer).digest("hex"),
           uploadedAt: now,
-          expiresAt: new Date(now.getTime() + CV_RETENTION_MS),
           contentType: "application/pdf",
         });
         for (const row of matchingRows) matched.set(row.rowNumber, fileId);
@@ -368,6 +390,36 @@ function mappedRow(
     city: read("city"),
   });
   return parsed.success ? { ...parsed.data, rowNumber } : null;
+}
+
+/**
+ * Rows with the same team name (case and spacing ignored) form one team. A blank team name is a
+ * team of one; when solos are not allowed it is still kept, flagged unteamed, so the ranking
+ * shows it as ineligible instead of silently dropping the person.
+ */
+export function groupImportRows<
+  Row extends { rowNumber: number; name: string; teamName?: string | undefined },
+>(
+  rows: readonly Row[],
+  minTeamSize: number,
+): Array<{ importKey: string; name: string; rows: Row[]; unteamed: boolean }> {
+  const grouped = new Map<string, Row[]>();
+  for (const row of rows) {
+    const normalizedTeam = row.teamName?.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+    const key = normalizedTeam || `solo:${row.rowNumber}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), row]);
+  }
+  return [...grouped].map(([importKey, teamRows]) => {
+    const first = teamRows[0];
+    const teamName = first?.teamName?.trim();
+    const unteamed = !teamName && minTeamSize > 1;
+    return {
+      importKey,
+      name: teamName || `${unteamed ? "No team" : "Solo"} — ${first?.name ?? "Participant"}`,
+      rows: teamRows,
+      unteamed,
+    };
+  });
 }
 
 export function createQuickApi(
@@ -440,6 +492,8 @@ export function createQuickApi(
           _id: eventId,
           kind: "quick",
           slug: `quick-${eventId.toHexString()}`,
+          taxonomyVersion,
+          rubricVersion,
           name: parsed.data.name,
           tagline: "Imported registration shortlist",
           description: "Private quick shortlist workspace",
@@ -702,7 +756,7 @@ export function createQuickApi(
               skills: [],
               novelty: 0,
               flags: [],
-              taxonomyVersion: taxonomy.version,
+              taxonomyVersion,
               createdAt: now,
               updatedAt: now,
             };
@@ -729,21 +783,15 @@ export function createQuickApi(
           }
         }
 
-        const grouped = new Map<string, ParsedImportRow[]>();
-        for (const row of rows) {
-          const normalizedTeam = row.teamName?.trim().toLocaleLowerCase().replace(/\s+/g, " ");
-          if (!normalizedTeam && owned.event.teamSize.min > 1) continue;
-          const key = normalizedTeam || `solo:${row.rowNumber}`;
-          grouped.set(key, [...(grouped.get(key) ?? []), row]);
-        }
-        for (const [importKey, teamRows] of grouped) {
+        for (const { importKey, name: displayName, rows: teamRows, unteamed } of groupImportRows(
+          rows,
+          owned.event.teamSize.min,
+        )) {
           const members = teamRows
             .map((row) => peopleByRow.get(row.rowNumber)?._id)
             .filter((id): id is ObjectIdType => Boolean(id));
           const captainId = members[0];
           if (!captainId) continue;
-          const displayName =
-            teamRows[0]?.teamName?.trim() || `Solo — ${teamRows[0]?.name ?? "Participant"}`;
           const team = await db.collection<TeamDocument>(collections.teams).findOneAndUpdate(
             { hackathonId: owned.event._id, importKey },
             {
@@ -754,6 +802,7 @@ export function createQuickApi(
                 status: "submitted",
                 submittedAt: now,
                 updatedAt: now,
+                ...(unteamed ? { unteamed: true } : {}),
               },
               $setOnInsert: { inviteCode: inviteCode(), createdAt: now },
             },
@@ -791,6 +840,90 @@ export function createQuickApi(
             rowsRejected: invalidRows,
             cvsMatched: matchedCvs.size,
           },
+        });
+      });
+
+      app.post("/api/organizer/quick/:quickId/promote", async (request, response) => {
+        const owned = await ownedImport(request, response);
+        if (!owned) return;
+        const parsed = PromoteQuickSchema.safeParse(request.body);
+        if (!parsed.success) {
+          response.status(422).json({
+            error: "validation_failed",
+            message: "Some event fields are invalid",
+            fields: parsed.error.issues.map((issue) => ({
+              path: issue.path.join("."),
+              message: issue.message,
+            })),
+          });
+          return;
+        }
+        const { timeline } = parsed.data;
+        // The promoted document must still be a valid hackathon as a whole.
+        const whole = HackathonSchema.safeParse({
+          hackathonId: owned.event._id.toHexString(),
+          kind: "event",
+          slug: parsed.data.slug,
+          name: owned.event.name,
+          organizerIds: owned.event.organizerIds.map((id) => id.toHexString()),
+          capacity: owned.event.capacity,
+          timeline,
+          ranking: owned.event.ranking,
+          visibility: "draft",
+        });
+        if (!whole.success) {
+          response.status(422).json({
+            error: "validation_failed",
+            message: "This quick shortlist cannot become an event as configured",
+          });
+          return;
+        }
+        const now = new Date();
+        try {
+          const promoted = await db.collection<HackathonDocument>(collections.hackathons).updateOne(
+            { _id: owned.event._id, kind: "quick" },
+            {
+              $set: {
+                kind: "event",
+                slug: parsed.data.slug,
+                tagline: parsed.data.tagline,
+                description: parsed.data.description,
+                links: parsed.data.links,
+                mode: parsed.data.mode,
+                ...(parsed.data.venue ? { venue: parsed.data.venue } : {}),
+                timeline: {
+                  timezone: timeline.timezone,
+                  registrationOpensAt: new Date(timeline.registrationOpensAt),
+                  registrationClosesAt: new Date(timeline.registrationClosesAt),
+                  shortlistPublishesAt: new Date(timeline.shortlistPublishesAt),
+                  rsvpDeadlineAt: new Date(timeline.rsvpDeadlineAt),
+                  eventStartsAt: new Date(timeline.eventStartsAt),
+                  eventEndsAt: new Date(timeline.eventEndsAt),
+                },
+                visibility: "draft",
+                updatedAt: now,
+              },
+              ...(parsed.data.venue ? {} : { $unset: { venue: "" } }),
+            },
+          );
+          if (promoted.modifiedCount === 0) {
+            response
+              .status(409)
+              .json({ error: "already_promoted", message: "This run is already an event" });
+            return;
+          }
+        } catch (error) {
+          if (error instanceof MongoServerError && error.code === 11000) {
+            response.status(409).json({
+              error: "slug_unavailable",
+              message: "That public event slug is already in use",
+            });
+            return;
+          }
+          throw error;
+        }
+        response.json({
+          event: { id: owned.event._id.toHexString(), kind: "event", slug: parsed.data.slug },
         });
       });
 

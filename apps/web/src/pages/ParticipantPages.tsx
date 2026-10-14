@@ -1,54 +1,127 @@
-import { taxonomy } from "@talentradar/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ReportProblem } from "../components/ReportProblem";
+import { useStatusLine } from "../components/statusline";
 import {
+  ActionAnchor,
   ActionButton,
   ActionLink,
-  Badge,
+  Bar,
+  CheckRow,
+  countdown,
+  Details,
   EmptyState,
   ErrorState,
   Field,
-  PageHeading,
-  Panel,
-  ProgressBar,
+  formatDate,
+  formatDateTime,
+  KeyValue,
+  LoadingState,
+  LogView,
+  Notice,
+  Pane,
+  Prompt,
+  RequiredMark,
+  ScreenHead,
   SelectInput,
-  StepRail,
+  SkillGroups,
+  Stat,
+  StateTag,
+  Status,
+  Steps,
+  TextAction,
   TextInput,
 } from "../components/ui";
 import {
-  ApiError,
   createParticipantTeam,
+  deleteParticipantAccount,
   getCurrentUser,
   getParticipantApplication,
   getParticipantOverview,
   getParticipantProfile,
   getParticipantRepositories,
+  getParticipantRsvp,
   getParticipantTeam,
-  getRuntimeConfig,
+  getParticipantTeamFit,
+  getPublicEvent,
+  getTeammateSuggestions,
   joinParticipantTeam,
   leaveParticipantTeam,
+  type ParticipantOverview,
+  participantDataExportUrl,
+  rebuildParticipantProfile,
   removeParticipantTeamMember,
   resetParticipantTeamInvite,
+  respondParticipantRsvp,
+  revokeGithubAccess,
   setParticipantLookingForTeam,
   submitParticipantApplication,
   submitParticipantTeam,
   uploadParticipantCv,
 } from "../lib/api";
+import { skillLabel, splitSkills } from "../lib/skills";
 
-const onboardingSteps = ["Your details", "CV", "Repositories", "Consent", "Review"] as const;
+// CV first, so the details step can prefill what the CV states (spec: participant flow step 3).
+const onboardingSteps = ["cv", "details", "repos", "review"] as const;
+type DetailField = "name" | "college" | "year" | "branch";
 
-function ParticipantNotice() {
+/** Section label used between stacked blocks on single-column screens. */
+function SectionLabel({ children }: { children: string }) {
+  return <h2 className="font-display text-dim text-xl">{children}</h2>;
+}
+
+function SignInNotice({ returnTo }: { returnTo?: string }) {
   return (
-    <div className="context-notice">
-      <span aria-hidden="true">i</span>
-      <p>Sign in with GitHub to load your profile, applications, and event teams.</p>
-      <ActionLink to="/login" tone="secondary">
-        Sign in
-      </ActionLink>
-    </div>
+    <Notice
+      action={
+        <ActionLink
+          to={returnTo ? `/login?returnTo=${encodeURIComponent(returnTo)}` : "/login"}
+          tone="primary"
+        >
+          Sign in with GitHub
+        </ActionLink>
+      }
+    >
+      You're signed out.
+    </Notice>
   );
 }
+
+/** The single most useful thing to do next, or null when nothing needs the participant. */
+function nextStep(
+  overview: ParticipantOverview,
+): { text: string; label: string; to: string } | null {
+  const { applications, profile } = overview;
+  const selected = applications.find((application) => application.status === "selected");
+  if (selected) {
+    return {
+      text: `${selected.eventName} selected your team.`,
+      label: "RSVP",
+      to: `/participant/applications/${selected.id}`,
+    };
+  }
+  if (applications.length === 0)
+    return { text: "No applications yet.", label: "Find an event", to: "/" };
+  if (!profile)
+    return { text: "Profile not built.", label: "Build it", to: "/participant/onboarding" };
+  if (profile.status === "failed") {
+    return { text: "Profile build failed.", label: "See why", to: "/participant/profile" };
+  }
+  const draft = applications.find((application) => application.status === "draft");
+  if (draft) {
+    return {
+      text: `${draft.eventName} isn't submitted yet.`,
+      label: "Open",
+      to: `/participant/applications/${draft.id}`,
+    };
+  }
+  return null;
+}
+
+/** One clickable row: `name  [STATE]  date  ›`. */
+const rowClass =
+  "grid grid-cols-[minmax(0,1fr)_auto_2ch] items-center gap-x-4 px-3 py-2.5 no-underline hover:bg-raised sm:grid-cols-[minmax(0,1fr)_auto_7rem_2ch]";
 
 export function ParticipantDashboard() {
   const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
@@ -59,117 +132,75 @@ export function ParticipantDashboard() {
     retry: false,
   });
   const applications = overview.data?.applications ?? [];
+  const signedOut = !account.data && !account.isPending;
+  const next = overview.data ? nextStep(overview.data) : null;
+  const profile = overview.data?.profile;
+  const firstName = (overview.data?.account.name ?? account.data?.name ?? "").split(" ")[0];
 
   return (
-    <div className="portal-page">
-      <PageHeading
-        eyebrow="PARTICIPANT / OVERVIEW"
-        title="Your applications"
-        description="Apply to an event, build one reusable evidence profile, and manage your team."
-        action={<ActionLink to="/">Browse public events</ActionLink>}
-      />
-      {!account.data && !account.isPending ? <ParticipantNotice /> : null}
+    <div className="mx-auto grid max-w-3xl gap-10">
+      <ScreenHead title={firstName ? `Hi, ${firstName}` : "Hi"} />
 
-      <section className="metric-strip" aria-label="Application summary">
-        <div>
-          <span>APPLICATIONS</span>
-          <strong>{applications.length}</strong>
-          <small>{account.data ? "Saved applications" : "Sign in to load"}</small>
-        </div>
-        <div>
-          <span>OPEN ACTIONS</span>
-          <strong>
-            {applications.filter((application) => application.status === "draft").length}
-          </strong>
-          <small>Drafts needing action</small>
-        </div>
-        <div>
-          <span>PROFILE</span>
-          <strong>{overview.data?.profile?.status ?? "—"}</strong>
-          <small>
-            {overview.data?.profile
-              ? `Build version ${overview.data.profile.version}`
-              : "Not built"}
-          </small>
-        </div>
-        <div>
-          <span>TEAM</span>
-          <strong>{applications.length > 0 ? "OPEN" : "—"}</strong>
-          <small>{applications.length > 0 ? "Open an application" : "No event selected"}</small>
-        </div>
-      </section>
-
-      <div className="dashboard-grid">
-        <Panel label="01 / APPLICATIONS" title="Active events" className="span-two">
-          {overview.isPending && account.data ? (
-            <div className="loading-state">Loading applications…</div>
-          ) : null}
-          {!account.isPending && !account.data ? (
-            <EmptyState title="Sign in to see your applications">
-              This workspace only loads applications owned by your connected GitHub account.
-            </EmptyState>
-          ) : null}
-          {account.data && applications.length === 0 && !overview.isPending ? (
-            <EmptyState
-              title="No applications yet"
-              action={<ActionLink to="/">Find an event</ActionLink>}
-            >
-              Applications appear here after you open a published event and start its participant
-              flow.
-            </EmptyState>
-          ) : null}
-          {applications.length > 0 ? (
-            <div className="event-table participant-application-table">
-              <div className="table-row table-head">
-                <span>EVENT</span>
-                <span>STATUS</span>
-                <span>UPDATED</span>
-                <span />
-              </div>
-              {applications.map((application) => (
-                <div className="table-row" key={application.id}>
-                  <strong>{application.eventName}</strong>
-                  <Badge tone={application.status === "selected" ? "success" : "neutral"}>
-                    {application.status.replace("_", " ")}
-                  </Badge>
-                  <span>{new Date(application.updatedAt).toLocaleDateString()}</span>
-                  <ActionLink
-                    to={`/participant/applications/${application.id}/status`}
-                    tone="quiet"
-                  >
-                    Open
-                  </ActionLink>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </Panel>
-        <Panel label="02 / PROFILE" title="Evidence profile">
-          <div className="profile-readiness">
-            <ProgressBar
-              value={overview.data?.profile?.status === "ready" ? 100 : overview.data ? 50 : 0}
-              label="Profile completeness"
-            />
-            <dl className="compact-definition-list">
-              <div>
-                <dt>Identity</dt>
-                <dd>{overview.data?.account.login ?? "Not connected"}</dd>
-              </div>
-              <div>
-                <dt>CV</dt>
-                <dd>{overview.data?.account.hasCv ? "Uploaded" : "Not provided"}</dd>
-              </div>
-              <div>
-                <dt>Repositories</dt>
-                <dd>None selected</dd>
-              </div>
-            </dl>
-            <ActionLink to="/participant/onboarding" tone="secondary">
-              Open onboarding
+      {signedOut ? (
+        <EmptyState
+          title="Sign in to see your applications"
+          action={
+            <ActionLink to="/login" tone="primary">
+              Sign in with GitHub
             </ActionLink>
-          </div>
-        </Panel>
-      </div>
+          }
+        />
+      ) : null}
+      {overview.isError ? (
+        <ErrorState message={overview.error.message} retry={() => void overview.refetch()} />
+      ) : null}
+      {overview.isPending && account.data ? <LoadingState label="loading" /> : null}
+
+      {next ? (
+        <div className="flex flex-wrap items-center justify-between gap-4 border border-(--frame) px-6 py-5">
+          <p className="font-display text-2xl">{next.text}</p>
+          <ActionLink to={next.to} tone="primary">
+            {next.label}
+          </ActionLink>
+        </div>
+      ) : null}
+
+      {applications.length > 0 ? (
+        <section className="grid gap-2">
+          <SectionLabel>applications</SectionLabel>
+          <ul className="-mx-3 grid">
+            {applications.map((application) => (
+              <li key={application.id}>
+                <Link className={rowClass} to={`/participant/applications/${application.id}`}>
+                  <span className="truncate font-bold">{application.eventName}</span>
+                  <StateTag state={application.status} />
+                  <span className="dim hidden sm:block">{formatDate(application.updatedAt)}</span>
+                  <span className="text-accent" aria-hidden="true">
+                    ›
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {overview.data ? (
+        <section className="grid gap-2">
+          <SectionLabel>profile</SectionLabel>
+          <Link
+            className={`-mx-3 ${rowClass}`}
+            to={profile ? "/participant/profile" : "/participant/onboarding"}
+          >
+            <span className="dim">{profile ? `version ${profile.version}` : "not built"}</span>
+            {profile ? <StateTag state={profile.status} /> : <span />}
+            <span className="hidden sm:block">{profile ? "see profile" : "build"}</span>
+            <span className="text-accent" aria-hidden="true">
+              ›
+            </span>
+          </Link>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -180,17 +211,26 @@ export function ParticipantOnboarding() {
   const queryClient = useQueryClient();
   const [step, setStep] = useState(0);
   const [consented, setConsented] = useState(false);
-  const [syntheticCvConfirmed, setSyntheticCvConfirmed] = useState(false);
   const [details, setDetails] = useState({ name: "", college: "", year: "", branch: "" });
   const [selectedRepositories, setSelectedRepositories] = useState<string[]>([]);
   const [uploadedCv, setUploadedCv] = useState<{ id: string; name: string; size: number } | null>(
     null,
   );
+  // Fields prefilled from the CV (marked until the person edits them), and fields they typed.
+  const [fromCv, setFromCv] = useState<Partial<Record<DetailField, true>>>({});
+  const [edited, setEdited] = useState<Partial<Record<DetailField, true>>>({});
   const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
   const overview = useQuery({
     queryKey: ["participant-overview"],
     queryFn: getParticipantOverview,
     enabled: Boolean(account.data),
+    retry: false,
+  });
+  // Only for the title: the event name, shared with the event page's cache.
+  const event = useQuery({
+    queryKey: ["public-event", slug],
+    queryFn: () => getPublicEvent(slug ?? ""),
+    enabled: Boolean(slug),
     retry: false,
   });
   const repositories = useQuery({
@@ -199,11 +239,24 @@ export function ParticipantOnboarding() {
     enabled: Boolean(account.data) && step >= 2,
     retry: false,
   });
-  const runtimeConfig = useQuery({ queryKey: ["runtime-config"], queryFn: getRuntimeConfig });
   const uploadCv = useMutation({
     mutationFn: uploadParticipantCv,
-    onSuccess: async (cv) => {
+    onSuccess: async ({ cv, details: found }) => {
       setUploadedCv(cv);
+      // A first-time applicant's fields hold only GitHub defaults, so the CV wins there; a
+      // returning one's saved details win. Anything the person typed is never overwritten.
+      const firstTime = !overview.data?.account.college;
+      const applied: Partial<Record<DetailField, true>> = {};
+      const next = { ...details };
+      for (const field of ["name", "college", "year", "branch"] as const) {
+        const value = found[field];
+        if (value && !edited[field] && (firstTime || !details[field])) {
+          next[field] = value;
+          applied[field] = true;
+        }
+      }
+      setDetails(next);
+      setFromCv(applied);
       await queryClient.invalidateQueries({ queryKey: ["participant-overview"] });
     },
   });
@@ -214,12 +267,11 @@ export function ParticipantOnboarding() {
         details,
         repositories: selectedRepositories,
         consent: true,
-        syntheticCv: syntheticCvConfirmed,
       });
     },
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["participant-overview"] });
-      navigate(`/participant/applications/${result.application.id}/status`);
+      navigate(`/participant/applications/${result.application.id}`);
     },
   });
 
@@ -233,20 +285,21 @@ export function ParticipantOnboarding() {
     }));
   }, [overview.data]);
 
-  const updateDetail = (field: keyof typeof details, value: string) => {
+  const updateDetail = (field: DetailField, value: string) => {
     setDetails((current) => ({ ...current, [field]: value }));
+    setEdited((current) => ({ ...current, [field]: true }));
+    setFromCv(({ [field]: _removed, ...rest }) => rest);
   };
+  const cvHint = (field: DetailField) => (fromCv[field] ? { hint: "from your CV" } : {});
 
   const cvReady = Boolean(uploadedCv || overview.data?.account.hasCv);
-  const privacyReady =
-    consented && (runtimeConfig.data?.modelDataPolicy !== "synthetic_only" || syntheticCvConfirmed);
   const stepValid = [
-    Object.values(details).every((value) => value.trim().length > 0),
     cvReady,
+    Object.values(details).every((value) => value.trim().length > 0),
     selectedRepositories.length > 0 && selectedRepositories.length <= 6,
-    privacyReady,
-    Boolean(slug) && privacyReady && cvReady && selectedRepositories.length > 0,
+    Boolean(slug) && consented && cvReady && selectedRepositories.length > 0,
   ];
+  const lastStep = step === onboardingSteps.length - 1;
 
   const toggleRepository = (fullName: string) => {
     setSelectedRepositories((current) =>
@@ -259,48 +312,53 @@ export function ParticipantOnboarding() {
   };
 
   return (
-    <div className="portal-page wizard-page">
-      <PageHeading
-        eyebrow={slug ? `APPLICATION / ${slug.toUpperCase()}` : "PARTICIPANT / ONBOARDING"}
-        title="Build your evidence profile"
-        description="Confirm your details, choose public work you want assessed, and control consent before processing starts."
-      />
-      <StepRail steps={onboardingSteps} current={step} />
+    <div className="mx-auto grid max-w-2xl gap-10">
+      <ScreenHead title={slug ? `Apply to ${event.data?.name ?? slug}` : "Your profile inputs"} />
 
-      {!account.data && !account.isPending ? <ParticipantNotice /> : null}
+      {!account.data && !account.isPending ? (
+        <SignInNotice {...(slug ? { returnTo: `/participant/apply/${slug}` } : {})} />
+      ) : null}
 
-      <div className="wizard-layout">
-        <Panel
-          label={`STEP ${step + 1} / ${onboardingSteps.length}`}
-          title={onboardingSteps[step] ?? onboardingSteps[0]}
-          className="wizard-main"
+      <Steps steps={onboardingSteps} current={step} onSelect={setStep} />
+
+      <div className="grid gap-6">
+        <Pane
+          title={
+            step === 2 ? (
+              <>
+                repos
+                <RequiredMark />
+              </>
+            ) : (
+              (onboardingSteps[step] ?? onboardingSteps[0])
+            )
+          }
+          meta={step === 2 ? `${selectedRepositories.length} / 6` : undefined}
+          flush={step === 2 && Boolean(repositories.data?.length)}
+          active
         >
-          {step === 0 ? (
-            <div className="form-grid">
-              <Field
-                label="Full name"
-                hint="Pulled from your CV when available; always confirm it."
-              >
+          {step === 1 ? (
+            <div className="grid items-start gap-4 sm:grid-cols-2">
+              <Field label="Full name" required {...cvHint("name")}>
                 <TextInput
                   value={details.name}
                   onChange={(event) => updateDetail("name", event.target.value)}
                   autoComplete="name"
-                  placeholder="Your full name"
                 />
               </Field>
-              <Field label="College or university">
+              <Field label="College" required {...cvHint("college")}>
                 <TextInput
                   value={details.college}
                   onChange={(event) => updateDetail("college", event.target.value)}
-                  placeholder="Institution name"
+                  autoComplete="organization"
                 />
               </Field>
-              <Field label="Year of study">
+              <Field label="Year of study" required {...cvHint("year")}>
                 <SelectInput
                   value={details.year}
                   onChange={(event) => updateDetail("year", event.target.value)}
                 >
-                  <option value="">Select year</option>
+                  <option value="">Select</option>
                   <option value="1">First year</option>
                   <option value="2">Second year</option>
                   <option value="3">Third year</option>
@@ -309,260 +367,196 @@ export function ParticipantOnboarding() {
                   <option value="graduate">Graduate</option>
                 </SelectInput>
               </Field>
-              <Field label="Branch or course">
+              <Field label="Branch" required {...cvHint("branch")}>
                 <TextInput
                   value={details.branch}
                   onChange={(event) => updateDetail("branch", event.target.value)}
-                  placeholder="e.g. Computer Science"
                 />
               </Field>
             </div>
           ) : null}
 
-          {step === 1 ? (
-            <div className="upload-zone">
-              <span aria-hidden="true">PDF</span>
-              <h3>Choose your current CV</h3>
-              <p>PDF only, up to 2 MB. You can inspect and replace it before processing.</p>
-              <input
-                id="participant-cv"
-                type="file"
-                accept="application/pdf,.pdf"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) uploadCv.mutate(file);
-                }}
-              />
-              <label className="btn terminal-action action-secondary" htmlFor="participant-cv">
-                [ {uploadCv.isPending ? "Uploading…" : cvReady ? "Replace PDF" : "Choose PDF"} ]
-              </label>
+          {step === 0 ? (
+            <div className="grid gap-4">
+              <Field label="CV file" hint="PDF, max 2 MB" required={!cvReady}>
+                <input
+                  id="participant-cv"
+                  className="file-input w-full"
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  disabled={uploadCv.isPending}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) uploadCv.mutate(file);
+                  }}
+                />
+              </Field>
+              {uploadCv.isPending ? <LoadingState label="uploading" /> : null}
               {uploadedCv ? (
-                <p className="muted-copy">
-                  Uploaded {uploadedCv.name} · {(uploadedCv.size / 1024).toFixed(0)} KB
+                <p>
+                  <Status tone="ok">uploaded</Status> {uploadedCv.name}
                 </p>
               ) : overview.data?.account.hasCv ? (
-                <p className="muted-copy">A CV is already stored for this profile.</p>
+                <p>
+                  <Status tone="ok">on file</Status>
+                </p>
               ) : null}
               {uploadCv.isError ? (
-                <div className="error-state" role="alert">
+                <Notice tone="error" tag="error">
                   {uploadCv.error.message}
-                </div>
+                </Notice>
               ) : null}
             </div>
           ) : null}
 
           {step === 2 ? (
-            <div className="repository-step">
-              {!account.data ? (
-                <div className="context-notice compact">
-                  <span aria-hidden="true">i</span>
-                  <p>Connect GitHub to load the public repositories owned by your account.</p>
-                  <ActionLink
-                    to={`/login?returnTo=${encodeURIComponent(`/participant/apply/${slug ?? ""}`)}`}
-                    tone="secondary"
-                  >
-                    Connect GitHub
-                  </ActionLink>
-                </div>
-              ) : null}
-              {repositories.isPending && account.data ? (
-                <div className="loading-state">Reading public repositories…</div>
-              ) : null}
+            <>
+              {!account.data ? <p className="dim">Sign in first.</p> : null}
+              {repositories.isPending && account.data ? <LoadingState label="loading" /> : null}
               {repositories.isError ? (
-                <div className="error-state" role="alert">
-                  {repositories.error.message}
-                </div>
+                <ErrorState
+                  message={repositories.error.message}
+                  retry={() => void repositories.refetch()}
+                />
               ) : null}
               {repositories.data?.length === 0 ? (
-                <EmptyState title="No repositories available">
-                  GitHub did not return an eligible public repository for this account.
-                </EmptyState>
+                <EmptyState title="No public repositories" />
               ) : null}
               {repositories.data && repositories.data.length > 0 ? (
-                <div className="repository-picker">
-                  <div className="repository-picker-heading">
-                    <span>SELECTED {selectedRepositories.length} / 6</span>
-                    <small>Fork authorship is verified during processing.</small>
-                  </div>
-                  {repositories.data.map((repository) => (
-                    <label
-                      className={`repository-choice ${repository.eligible ? "" : "disabled"}`}
-                      key={repository.fullName}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedRepositories.includes(repository.fullName)}
-                        disabled={!repository.eligible}
-                        onChange={() => toggleRepository(repository.fullName)}
-                      />
-                      <span>
-                        <strong>{repository.fullName}</strong>
-                        <small>
-                          {repository.language ?? "Language unavailable"} ·{" "}
-                          {(repository.sizeKb / 1024).toFixed(1)} MB
-                          {repository.fork ? " · fork" : ""}
-                        </small>
-                        {repository.description ? <p>{repository.description}</p> : null}
-                        {repository.exclusionReason ? <em>{repository.exclusionReason}</em> : null}
-                      </span>
-                    </label>
-                  ))}
-                </div>
+                <ul className="grid">
+                  {repositories.data.map((repository) => {
+                    const checked = selectedRepositories.includes(repository.fullName);
+                    const full = !checked && selectedRepositories.length >= 6;
+                    const usable = repository.eligible && !full;
+                    return (
+                      <li key={repository.fullName}>
+                        <label
+                          className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 px-6 py-2 ${
+                            usable ? "cursor-pointer hover:bg-raised" : "cursor-not-allowed"
+                          } ${repository.eligible ? "" : "opacity-60"}`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="checkbox tui-check checkbox-sm"
+                            checked={checked}
+                            disabled={!usable}
+                            onChange={() => toggleRepository(repository.fullName)}
+                          />
+                          <span className="grid min-w-0">
+                            <span className={`truncate ${checked ? "text-accent" : ""}`}>
+                              {repository.fullName}
+                            </span>
+                            {repository.exclusionReason ? (
+                              <span className="text-warn text-sm">
+                                <span aria-hidden="true">✗ </span>
+                                {repository.exclusionReason}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span className="dim text-sm">
+                            {repository.language ?? ""}
+                            {repository.fork ? " · fork" : ""}
+                          </span>
+                        </label>
+                      </li>
+                    );
+                  })}
+                </ul>
               ) : null}
-            </div>
+            </>
           ) : null}
 
           {step === 3 ? (
-            <div className="consent-copy">
-              <h3>Review before automated evaluation</h3>
-              <p>
-                TalentRadar will analyze the public repositories you select and the CV you upload to
-                produce skill evidence, confidence, and model reasoning for event organizers.
-              </p>
-              <ul className="terminal-list">
-                <li>Only the selected public repositories are assessed.</li>
-                <li>Evidence links point to the exact commit that was evaluated.</li>
-                <li>You can report incorrect evidence and request deletion from Data settings.</li>
-                <li>Model reasoning can be wrong; cited files remain the source of proof.</li>
-              </ul>
-              <label className="terminal-check">
-                <input
-                  type="checkbox"
-                  checked={consented}
-                  onChange={(event) => setConsented(event.target.checked)}
-                />
-                <span>I understand and consent to this automated evaluation.</span>
-              </label>
-              {runtimeConfig.data?.modelDataPolicy === "synthetic_only" ? (
-                <label className="terminal-check">
-                  <input
-                    type="checkbox"
-                    checked={syntheticCvConfirmed}
-                    onChange={(event) => setSyntheticCvConfirmed(event.target.checked)}
-                  />
-                  <span>
-                    This free-tier deployment accepts synthetic CVs only. I confirm this PDF does
-                    not contain a real person's personal data.
-                  </span>
-                </label>
-              ) : null}
+            <div className="grid gap-6">
+              <KeyValue
+                items={[
+                  ["name", details.name || "missing"],
+                  ["college", details.college || "missing"],
+                  ["CV", cvReady ? (uploadedCv?.name ?? "on file") : "missing"],
+                  [
+                    "repos",
+                    selectedRepositories.length > 0
+                      ? selectedRepositories.map((name) => name.split("/").pop()).join(", ")
+                      : "none",
+                  ],
+                ]}
+              />
+              <CheckRow checked={consented} onChange={setConsented} required>
+                I agree to automated evaluation
+              </CheckRow>
             </div>
           ) : null}
+        </Pane>
 
-          {step === 4 ? (
-            <div className="review-grid">
-              <dl className="review-list">
-                <div>
-                  <dt>Name</dt>
-                  <dd>{details.name || "Not provided"}</dd>
-                </div>
-                <div>
-                  <dt>College</dt>
-                  <dd>{details.college || "Not provided"}</dd>
-                </div>
-                <div>
-                  <dt>Year</dt>
-                  <dd>{details.year || "Not provided"}</dd>
-                </div>
-                <div>
-                  <dt>Branch</dt>
-                  <dd>{details.branch || "Not provided"}</dd>
-                </div>
-                <div>
-                  <dt>CV</dt>
-                  <dd>{cvReady ? (uploadedCv?.name ?? "Stored PDF") : "Not selected"}</dd>
-                </div>
-                <div>
-                  <dt>Repositories</dt>
-                  <dd>{selectedRepositories.length || "None selected"}</dd>
-                </div>
-                <div>
-                  <dt>Consent</dt>
-                  <dd>
-                    <Badge tone={privacyReady ? "success" : "warning"}>
-                      {privacyReady ? "Granted" : "Required"}
-                    </Badge>
-                  </dd>
-                </div>
-              </dl>
-              <div className="submission-note">
-                <strong>
-                  {slug ? "Ready to create the application." : "Choose an event first."}
-                </strong>
-                <p>
-                  Profile processing begins only after required details, a repository selection, and
-                  consent are present.
-                </p>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="wizard-actions">
+        <div className="flex flex-wrap justify-between gap-2">
+          <ActionButton
+            tone="quiet"
+            disabled={step === 0}
+            onClick={() => setStep((value) => Math.max(0, value - 1))}
+          >
+            Back
+          </ActionButton>
+          {lastStep ? (
             <ActionButton
-              tone="quiet"
-              disabled={step === 0}
-              onClick={() => setStep((value) => Math.max(0, value - 1))}
+              tone="primary"
+              disabled={!stepValid.every(Boolean) || submitApplication.isPending}
+              onClick={() => submitApplication.mutate()}
             >
-              Back
+              {submitApplication.isPending ? "Applying…" : "Apply"}
             </ActionButton>
-            {step < onboardingSteps.length - 1 ? (
-              <ActionButton
-                disabled={!stepValid[step]}
-                onClick={() => setStep((value) => Math.min(onboardingSteps.length - 1, value + 1))}
-              >
-                Continue
-              </ActionButton>
-            ) : (
-              <ActionButton
-                disabled={!stepValid.every(Boolean) || submitApplication.isPending}
-                onClick={() => submitApplication.mutate()}
-              >
-                {submitApplication.isPending ? "Submitting…" : "Apply and build profile"}
-              </ActionButton>
-            )}
-          </div>
-          {submitApplication.isError ? (
-            <div className="error-state" role="alert">
-              {submitApplication.error.message}
-            </div>
-          ) : null}
-        </Panel>
-
-        <aside className="wizard-aside">
-          <Panel label="DATA / ACCESS" title="What GitHub shares">
-            <dl className="compact-definition-list">
-              <div>
-                <dt>Identity</dt>
-                <dd>read:user</dd>
-              </div>
-              <div>
-                <dt>Email</dt>
-                <dd>user:email</dd>
-              </div>
-              <div>
-                <dt>Code</dt>
-                <dd>Public only</dd>
-              </div>
-              <div>
-                <dt>Write access</dt>
-                <dd>Never</dd>
-              </div>
-            </dl>
-          </Panel>
-          <Panel label="PROFILE / TIME" title="Build happens in the background">
-            <p className="prose-copy">
-              Once submitted, you can create or join a team while your profile is built. Only real
-              processing events appear in the build log.
-            </p>
-          </Panel>
-        </aside>
+          ) : (
+            <ActionButton
+              tone="primary"
+              disabled={!stepValid[step]}
+              onClick={() => setStep((value) => Math.min(onboardingSteps.length - 1, value + 1))}
+            >
+              Continue
+            </ActionButton>
+          )}
+        </div>
+        {submitApplication.isError ? (
+          <Notice tone="error" tag="error">
+            {submitApplication.error.message}
+          </Notice>
+        ) : null}
       </div>
     </div>
   );
 }
 
+function isTyping(target: EventTarget | null) {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+  );
+}
+
+const logTime = new Intl.DateTimeFormat("en-IN", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+  timeZone: "Asia/Kolkata",
+});
+
 export function ParticipantProfilePage() {
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
+  const login = account.data?.login;
+  const queryClient = useQueryClient();
+  const { post } = useStatusLine();
+  const cvInputRef = useRef<HTMLInputElement>(null);
+  // Spec: "Replace CV" re-runs the profile build with the new CV and the same repositories.
+  const replaceCv = useMutation({
+    mutationFn: async (file: File) => {
+      await uploadParticipantCv(file);
+      return rebuildParticipantProfile();
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["participant-profile"] });
+      post(result.profile.reused ? "CV unchanged." : "Rebuilding profile.");
+    },
+  });
   const profile = useQuery({
     queryKey: ["participant-profile"],
     queryFn: getParticipantProfile,
@@ -573,173 +567,288 @@ export function ParticipantProfilePage() {
         ? 5000
         : false,
   });
-  const selectedSkill = profile.data?.profile.skills.find((skill) => skill.id === selectedSkillId);
+  const [filter, setFilter] = useState("");
+  const filterRef = useRef<HTMLInputElement>(null);
+  const allSkills = profile.data?.profile.skills ?? [];
+  // Areas (taxonomy domains) first, then tools, each strongest first; the filter narrows both.
+  const groups = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    const visible = allSkills
+      .filter(
+        (skill) => !needle || `${skillLabel(skill.id)} ${skill.id}`.toLowerCase().includes(needle),
+      )
+      .sort((left, right) => right.level - left.level);
+    return splitSkills(visible, (skill) => skill.id);
+  }, [allSkills, filter]);
+  const skills = groups.flatMap((group) => group.items);
+  const selectedSkill = skills.find((skill) => skill.id === selectedSkillId) ?? skills[0];
   const progress = (profile.data?.jobs ?? [])
     .flatMap((job) => job.progress)
     .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
 
-  if (profile.isPending) return <div className="loading-state">Loading evidence profile…</div>;
+  // j/k and arrow keys walk the skills list, like lazygit, unless focus is in a field.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (isTyping(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "/" && filterRef.current) {
+        event.preventDefault();
+        filterRef.current.focus();
+        return;
+      }
+      const step =
+        event.key === "j" || event.key === "ArrowDown"
+          ? 1
+          : event.key === "k" || event.key === "ArrowUp"
+            ? -1
+            : 0;
+      if (step === 0 || skills.length === 0) return;
+      event.preventDefault();
+      const index = skills.findIndex((skill) => skill.id === selectedSkill?.id);
+      const next = skills[Math.max(0, Math.min(skills.length - 1, index + step))];
+      if (next) {
+        setSelectedSkillId(next.id);
+        document.getElementById(`skill-${next.id}`)?.scrollIntoView({ block: "nearest" });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [skills, selectedSkill?.id]);
+
+  if (profile.isPending) return <LoadingState label="loading profile" />;
   if (profile.isError) {
     return (
-      <div className="portal-page">
-        <PageHeading
-          eyebrow="PARTICIPANT / PROFILE"
-          title="Your evidence profile"
-          description="Every skill must be traceable to repository files at a fixed commit."
-          action={<ActionLink to="/participant/onboarding">Complete profile</ActionLink>}
+      <div className="mx-auto grid max-w-2xl gap-10">
+        <ScreenHead title="Profile" />
+        <EmptyState
+          title="No profile yet"
+          action={
+            <ActionLink to="/participant/onboarding" tone="primary">
+              Build profile
+            </ActionLink>
+          }
         />
-        <EmptyState title="No profile has been built">
-          Open a published event, choose repositories, provide consent, and submit the application
-          to start a real profile build.
-        </EmptyState>
       </div>
     );
   }
 
+  const data = profile.data.profile;
+  const live = data.status === "pending" || data.status === "building";
+
   return (
-    <div className="portal-page">
-      <PageHeading
-        eyebrow="PARTICIPANT / PROFILE"
-        title="Your evidence profile"
-        description="Every skill must be traceable to repository files at a fixed commit."
-        action={<ActionLink to="/participant/onboarding">Change inputs</ActionLink>}
-      />
-      <div className="event-identity">
-        <span>PROFILE</span>
-        <strong>VERSION {profile.data.profile.version}</strong>
-        <Badge tone={profile.data.profile.status === "ready" ? "success" : "warning"}>
-          {profile.data.profile.status}
-        </Badge>
-        <small>
-          {profile.data.profile.builtAt
-            ? new Date(profile.data.profile.builtAt).toLocaleString()
-            : "Build not complete"}
-        </small>
-      </div>
-      <div className="two-column-layout">
-        <Panel label="EVIDENCE / SKILLS" title="Detected skills" className="span-two">
-          {profile.data.profile.skills.length === 0 ? (
-            <EmptyState
-              title={
-                profile.data.profile.status === "failed"
-                  ? "Profile build failed"
-                  : "No skills available yet"
-              }
+    <div className="mx-auto grid max-w-6xl gap-10">
+      <ScreenHead
+        title="Profile"
+        actions={
+          <div className="flex flex-wrap items-center gap-4">
+            <StateTag state={data.status} />
+            <span className="dim">v{data.version}</span>
+            <input
+              ref={cvInputRef}
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              aria-label="New CV (PDF)"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) replaceCv.mutate(file);
+                event.target.value = "";
+              }}
+            />
+            <ActionButton
+              disabled={replaceCv.isPending || live}
+              onClick={() => cvInputRef.current?.click()}
             >
-              {profile.data.profile.error ??
-                "Real worker progress appears below while repository and CV processing continues."}
-            </EmptyState>
-          ) : (
-            <div className="profile-skill-list">
-              {profile.data.profile.skills.map((skill) => (
-                <button
-                  type="button"
-                  className={selectedSkillId === skill.id ? "selected" : ""}
-                  key={skill.id}
-                  onClick={() => setSelectedSkillId(skill.id)}
-                >
-                  <span>
-                    <strong>
-                      {taxonomy.technologies[skill.id]?.label ??
-                        taxonomy.domains[skill.id]?.label ??
-                        skill.id}
-                    </strong>
-                    <small>{skill.evidence.length} cited files</small>
-                  </span>
-                  <span>LVL {skill.level.toFixed(2)}</span>
-                  <Badge tone={skill.confidence === "high" ? "success" : "neutral"}>
-                    {skill.confidence} confidence
-                  </Badge>
-                  <b>{skill.effective.toFixed(2)} effective</b>
-                </button>
-              ))}
-            </div>
-          )}
-        </Panel>
-        <Panel
-          label="EVIDENCE / DETAIL"
-          title={selectedSkill ? "Selected skill" : "Choose a skill"}
-        >
-          {selectedSkill ? (
-            <div className="skill-evidence-detail">
-              <p>{selectedSkill.thought}</p>
-              {selectedSkill.evidence.map((evidence) => (
-                <a
-                  href={`https://github.com/${evidence.repository}/blob/${evidence.commitSha}/${evidence.path}`}
-                  key={`${evidence.repository}-${evidence.path}`}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  <strong>{evidence.path}</strong>
-                  <span>
-                    {evidence.repository}@{evidence.commitSha.slice(0, 8)}
-                  </span>
-                  <small>{evidence.note}</small>
-                </a>
-              ))}
-            </div>
-          ) : (
-            <p className="muted-copy">
-              Select a skill to inspect its proof, interpretation, and frozen commit.
-            </p>
-          )}
-        </Panel>
-        <Panel label="INPUT / REPOSITORIES" title="Selected repositories">
-          <dl className="compact-definition-list">
-            {profile.data.profile.repos.map((repository) => (
-              <div key={repository.fullName}>
-                <dt>{repository.fullName}</dt>
-                <dd>{repository.sha?.slice(0, 10) ?? "Processing"}</dd>
+              {replaceCv.isPending ? "Uploading…" : "Replace CV"}
+            </ActionButton>
+            <ActionLink to="/participant/onboarding">Change inputs</ActionLink>
+          </div>
+        }
+      />
+      {replaceCv.isError ? (
+        <Notice tone="error" tag="error">
+          {replaceCv.error.message}
+        </Notice>
+      ) : null}
+
+      {allSkills.length === 0 ? (
+        <EmptyState title={data.status === "failed" ? "Build failed" : "Building your profile"}>
+          {data.error}
+        </EmptyState>
+      ) : (
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+          <Pane
+            title="skills"
+            meta={allSkills.length}
+            foot={allSkills.length > 8 ? "/ filter · j/k move" : "j/k move"}
+            flush
+          >
+            {allSkills.length > 8 ? (
+              <div className="px-4 pb-2">
+                <input
+                  ref={filterRef}
+                  className="input tui-input"
+                  aria-label="Filter skills"
+                  placeholder="filter…"
+                  value={filter}
+                  onChange={(event) => setFilter(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      setFilter("");
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
               </div>
-            ))}
-          </dl>
-        </Panel>
-        <Panel label="BUILD / REAL EVENTS" title="Profile processing" className="span-two">
-          {progress.length > 0 ? (
-            <div className="mockup-code real-build-log" aria-live="polite">
-              {progress.map((event, index) => (
-                <pre
-                  data-prefix={String(index + 1).padStart(2, "0")}
-                  key={`${event.at}-${event.code}`}
-                >
-                  <code>{event.message}</code>
-                </pre>
+            ) : null}
+            <div className="max-h-[60vh] overflow-y-auto">
+              {groups.length === 0 ? <p className="dim px-6 py-2">No match.</p> : null}
+              {groups.map((group) => (
+                <div key={group.label}>
+                  <p className="dim px-6 pt-2 pb-1 text-sm">
+                    {group.label} <span className="text-xs">{group.items.length}</span>
+                  </p>
+                  <div className="tui-list" role="listbox" aria-label={`Skills: ${group.label}`}>
+                    {group.items.map((skill) => {
+                      const selected = skill.id === selectedSkill?.id;
+                      return (
+                        <button
+                          type="button"
+                          role="option"
+                          id={`skill-${skill.id}`}
+                          aria-selected={selected}
+                          key={skill.id}
+                          className="py-1.5!"
+                          onClick={() => setSelectedSkillId(skill.id)}
+                        >
+                          <span className="marker" aria-hidden="true">
+                            {selected ? "▸" : ""}
+                          </span>
+                          <span className="truncate">{skillLabel(skill.id)}</span>
+                          <Bar value={skill.level} cells={6} label={skillLabel(skill.id)} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               ))}
             </div>
-          ) : (
-            <EmptyState title="No worker events yet">
-              The queued build has not been claimed.
-            </EmptyState>
-          )}
-        </Panel>
+          </Pane>
+
+          {selectedSkill ? (
+            <Pane title={skillLabel(selectedSkill.id)} active className="lg:sticky lg:top-4">
+              <div className="grid gap-6">
+                <div className="flex items-end gap-6">
+                  <Stat value={selectedSkill.level.toFixed(1)} label="level of 5" />
+                  <StateTag
+                    state={selectedSkill.confidence}
+                    label={`${selectedSkill.confidence} confidence`}
+                  />
+                </div>
+
+                {selectedSkill.evidence.length === 0 ? (
+                  <p className="dim">No files cited.</p>
+                ) : (
+                  <ul className="grid gap-4">
+                    {selectedSkill.evidence.map((evidence) => (
+                      <li className="grid gap-1" key={`${evidence.repository}-${evidence.path}`}>
+                        <a
+                          className="tui-link break-all text-fg!"
+                          href={`https://github.com/${evidence.repository}/blob/${evidence.commitSha}/${evidence.path}`}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          {evidence.path} ↗
+                        </a>
+                        <span className="dim border-line border-l pl-3">{evidence.note}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {selectedSkill.thought ? (
+                  <div className="grid gap-1">
+                    <h3 className="dim font-normal">reasoning</h3>
+                    <p>{selectedSkill.thought}</p>
+                  </div>
+                ) : null}
+                <div>
+                  <ReportProblem key={selectedSkill.id} skill={selectedSkill.id} />
+                </div>
+              </div>
+            </Pane>
+          ) : null}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-x-10 gap-y-4 [&>[open]]:basis-full">
+        <Details
+          summary="build log"
+          meta={live ? "live" : `${progress.length} events`}
+          open={live || data.status === "failed"}
+        >
+          <div className="grid gap-2">
+            <Prompt
+              command={`talentradar profile build @${login ?? "me"}${live ? " --follow" : ""}`}
+              {...(login ? { user: login } : {})}
+            />
+            {progress.length > 0 ? (
+              <LogView
+                live={live}
+                lines={progress.map((event) => ({
+                  key: `${event.at}-${event.code}`,
+                  text: `${logTime.format(new Date(event.at))}  ${event.message}`,
+                  ...(/fail|error/i.test(event.code) ? { tone: "error" as const } : {}),
+                }))}
+              />
+            ) : (
+              <p className="dim">Queued.</p>
+            )}
+          </div>
+        </Details>
+        <Details summary="repositories" meta={data.repos.length}>
+          <ul className="grid gap-1">
+            {data.repos.map((repository) => (
+              <li className="flex flex-wrap gap-x-[1ch]" key={repository.fullName}>
+                <span aria-hidden="true" className={repository.included ? "text-accent" : "dim"}>
+                  {repository.included ? "✓" : "·"}
+                </span>
+                <span className={repository.included ? "" : "dim"}>
+                  {repository.fullName}
+                  {repository.included ? null : " (not used)"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Details>
       </div>
     </div>
   );
 }
 
-export function ParticipantTeamPage() {
-  const { teamId } = useParams();
+/** One hackathon's team: a person has exactly one per event, so it lives on that application. */
+function TeamSection({ eventId }: { eventId: string }) {
   const queryClient = useQueryClient();
+  const { post } = useStatusLine();
   const [mode, setMode] = useState<"choose" | "create" | "join">("choose");
   const [teamName, setTeamName] = useState("");
   const [inviteCode, setInviteCode] = useState("");
-  const [notice, setNotice] = useState<string | null>(null);
   const context = useQuery({
-    queryKey: ["participant-team"],
-    queryFn: getParticipantTeam,
+    queryKey: ["participant-team", eventId],
+    queryFn: () => getParticipantTeam(eventId),
     retry: false,
   });
 
   const refreshTeam = async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["participant-team"] }),
+      queryClient.invalidateQueries({ queryKey: ["participant-team", eventId] }),
       queryClient.invalidateQueries({ queryKey: ["participant-overview"] }),
+      queryClient.invalidateQueries({ queryKey: ["participant-application"] }),
     ]);
   };
   const createTeam = useMutation({
     mutationFn: () => createParticipantTeam(context.data?.event.id ?? "", teamName),
     onSuccess: async () => {
-      setNotice("Team created. Share the invite code only with people you want to add.");
+      post("Team created.");
       setTeamName("");
       await refreshTeam();
     },
@@ -747,33 +856,29 @@ export function ParticipantTeamPage() {
   const joinTeam = useMutation({
     mutationFn: () => joinParticipantTeam(inviteCode),
     onSuccess: async () => {
-      setNotice("You joined the team.");
+      post("Joined the team.");
       setInviteCode("");
       await refreshTeam();
     },
   });
   const lookingForTeam = useMutation({
-    mutationFn: (enabled: boolean) => setParticipantLookingForTeam(enabled),
+    mutationFn: (enabled: boolean) => setParticipantLookingForTeam(eventId, enabled),
     onSuccess: async (enabled) => {
-      setNotice(
-        enabled
-          ? "Your name, college, and top three skills are visible to applicants in this event."
-          : "You are no longer listed in the looking-for-team pool.",
-      );
+      post(enabled ? "Listed as looking." : "No longer listed.");
       await refreshTeam();
     },
   });
   const submitTeam = useMutation({
     mutationFn: (id: string) => submitParticipantTeam(id),
     onSuccess: async () => {
-      setNotice("Team submitted. Membership is now locked for shortlisting.");
+      post("Team submitted.");
       await refreshTeam();
     },
   });
   const resetInvite = useMutation({
     mutationFn: (id: string) => resetParticipantTeamInvite(id),
     onSuccess: async () => {
-      setNotice("The old invite code is invalid. Share the new code with intended teammates.");
+      post("New invite code.");
       await refreshTeam();
     },
   });
@@ -781,16 +886,14 @@ export function ParticipantTeamPage() {
     mutationFn: ({ id, memberId }: { id: string; memberId: string }) =>
       removeParticipantTeamMember(id, memberId),
     onSuccess: async () => {
-      setNotice("Member removed from the roster.");
+      post("Member removed.");
       await refreshTeam();
     },
   });
   const leaveTeam = useMutation({
     mutationFn: (id: string) => leaveParticipantTeam(id),
     onSuccess: async () => {
-      setNotice(
-        "You left the team. If you were captain, captaincy moved to the earliest joined member.",
-      );
+      post("You left.");
       await refreshTeam();
     },
   });
@@ -803,345 +906,435 @@ export function ParticipantTeamPage() {
     removeMember.error ??
     leaveTeam.error;
   const team = context.data?.team;
-  const explicitTeamMismatch =
-    teamId && teamId !== "current" && context.data && context.data.team?.id !== teamId;
   const isCaptain = Boolean(team && context.data?.personId === team.captainId);
-  const allProfilesReady =
-    team?.members.every((member) => member.profileStatus === "ready") ?? false;
+  const notReady = team?.members.find((member) => member.profileStatus !== "ready");
   const validTeamSize = Boolean(
     team &&
       context.data &&
       team.members.length >= context.data.event.teamSize.min &&
       team.members.length <= context.data.event.teamSize.max,
   );
-  const submitBlockers = [
-    !validTeamSize
-      ? `Team size must be ${context.data?.event.teamSize.min ?? "—"}–${context.data?.event.teamSize.max ?? "—"}.`
-      : null,
-    !allProfilesReady ? "Every member needs a completed evidence profile." : null,
-  ].filter((blocker): blocker is string => Boolean(blocker));
+  // The first thing stopping submission, in a few words.
+  const submitBlocker = !validTeamSize
+    ? `needs ${context.data?.event.teamSize.min ?? "—"}–${context.data?.event.teamSize.max ?? "—"} members`
+    : notReady
+      ? `${notReady.name.split(" ")[0]}'s profile is ${notReady.profileStatus === "failed" ? "failed" : "building"}`
+      : null;
 
-  if (context.isPending) {
-    return (
-      <div className="portal-page">
-        <PageHeading
-          eyebrow="PARTICIPANT / TEAM"
-          title="Build your team"
-          description="Loading your active event and team membership."
-        />
-        <div className="loading-state">Loading team workspace…</div>
-      </div>
-    );
-  }
-
+  if (context.isPending) return <LoadingState label="loading team" />;
   if (context.isError) {
-    const needsApplication = context.error instanceof ApiError && context.error.status === 404;
-    return (
-      <div className="portal-page">
-        <PageHeading
-          eyebrow="PARTICIPANT / TEAM"
-          title="Build your team"
-          description="Create, join, or enter the looking-for-team pool before registration closes."
-        />
-        {needsApplication ? (
-          <EmptyState
-            title="Apply to an event first"
-            action={<ActionLink to="/">Browse events</ActionLink>}
-          >
-            A team belongs to one event. Start an application from its public page, then return
-            here.
-          </EmptyState>
-        ) : (
-          <ErrorState message={context.error.message} retry={() => void context.refetch()} />
-        )}
-      </div>
-    );
+    return <ErrorState message={context.error.message} retry={() => void context.refetch()} />;
   }
 
-  return (
-    <div className="portal-page">
-      <PageHeading
-        eyebrow="PARTICIPANT / TEAM"
-        title="Build your team"
-        description="Create, join, or opt into the event's looking-for-team pool before registration closes."
-      />
-      {notice ? (
-        <div className="context-notice team-notice" role="status">
-          <span aria-hidden="true">✓</span>
-          <p>{notice}</p>
-          <ActionButton tone="quiet" onClick={() => setNotice(null)}>
-            Dismiss
-          </ActionButton>
-        </div>
-      ) : null}
-      {mutationError ? (
-        <ErrorState
-          message={
-            mutationError instanceof Error ? mutationError.message : "The team action failed"
-          }
-        />
-      ) : null}
-      {explicitTeamMismatch ? (
-        <EmptyState
-          title="Team not found"
-          action={<ActionLink to="/participant/team/current">Open your team</ActionLink>}
-        >
-          This address does not match your active team for the event.
-        </EmptyState>
-      ) : team ? (
-        <div className="team-workspace-layout">
-          <Panel
-            label="TEAM / ROSTER"
-            title={team.name}
-            className="span-two"
-            action={
-              <Badge tone={team.status === "submitted" ? "success" : "neutral"}>
-                {team.status}
-              </Badge>
-            }
-          >
-            <div className="team-summary-strip">
-              <div>
-                <span>EVENT</span>
-                <strong>{context.data.event.name}</strong>
-              </div>
-              <div>
-                <span>MEMBERS</span>
-                <strong>
-                  {team.members.length} / {context.data.event.teamSize.max}
-                </strong>
-              </div>
-              <div>
-                <span>CLOSES</span>
-                <strong>
-                  {context.data.event.registrationClosesAt
-                    ? new Date(context.data.event.registrationClosesAt).toLocaleString()
-                    : "Not scheduled"}
-                </strong>
-              </div>
+  const event = context.data.event;
+  const listed = context.data.registration.lookingForTeam;
+  const errorNotice = mutationError ? (
+    <ErrorState
+      message={mutationError instanceof Error ? mutationError.message : "The team action failed"}
+    />
+  ) : null;
+
+  if (team) {
+    const draft = team.status === "draft";
+    return (
+      <section className="grid gap-6" aria-label="Team">
+        <div className="grid gap-4">
+          <header className="flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+              <h2 className="font-display text-3xl">
+                <span className="dim">team · </span>
+                {team.name}
+              </h2>
+              <StateTag state={team.status} />
             </div>
-            <ol className="team-roster">
-              {team.members.map((member, index) => (
-                <li className="team-member-row" key={member.id}>
-                  <span>{String(index + 1).padStart(2, "0")}</span>
-                  <div>
-                    <strong>{member.name}</strong>
-                    <small>@{member.github}</small>
-                  </div>
-                  {member.id === team.captainId ? <Badge tone="info">captain</Badge> : <span />}
-                  <Badge
-                    tone={
-                      member.profileStatus === "ready"
-                        ? "success"
-                        : member.profileStatus === "failed"
-                          ? "error"
-                          : "warning"
-                    }
-                  >
-                    profile {member.profileStatus}
-                  </Badge>
-                  {isCaptain && member.id !== team.captainId && team.status === "draft" ? (
-                    <button
-                      type="button"
-                      className="roster-remove"
-                      disabled={removeMember.isPending}
-                      onClick={() => removeMember.mutate({ id: team.id, memberId: member.id })}
-                    >
-                      Remove
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ol>
-          </Panel>
-          <Panel label="INVITE / PRIVATE" title="Add teammates">
-            {team.status === "draft" ? (
-              <div className="invite-code-block">
-                <span>INVITE CODE</span>
-                <strong>{team.inviteCode}</strong>
-                <p>
-                  Share this code privately. A teammate must already have an application for{" "}
-                  {context.data.event.name}.
-                </p>
-                <ActionButton
-                  tone="secondary"
+            {isCaptain && draft ? (
+              <ActionButton
+                tone="primary"
+                disabled={Boolean(submitBlocker) || submitTeam.isPending}
+                onClick={() => submitTeam.mutate(team.id)}
+              >
+                {submitTeam.isPending ? "Submitting…" : "Submit team"}
+              </ActionButton>
+            ) : null}
+          </header>
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+            {draft ? (
+              <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="dim">invite code</span>
+                <span className="font-display text-2xl text-accent tracking-widest">
+                  {team.inviteCode}
+                </span>
+                <TextAction
                   onClick={() => {
-                    void navigator.clipboard.writeText(team.inviteCode).then(() => {
-                      setNotice("Invite code copied.");
-                    });
+                    navigator.clipboard.writeText(team.inviteCode).then(
+                      () => post("Code copied."),
+                      () => post("Copy failed.", "error"),
+                    );
                   }}
                 >
-                  Copy code
-                </ActionButton>
+                  copy
+                </TextAction>
                 {isCaptain ? (
-                  <ActionButton
-                    tone="quiet"
+                  <TextAction
                     disabled={resetInvite.isPending}
                     onClick={() => resetInvite.mutate(team.id)}
                   >
-                    {resetInvite.isPending ? "Resetting…" : "Reset code"}
-                  </ActionButton>
+                    reset
+                  </TextAction>
                 ) : null}
-              </div>
+              </p>
             ) : (
-              <p className="muted-copy">Invites are disabled after the captain submits the team.</p>
+              <p className="dim">
+                {team.submittedAt ? `submitted ${formatDateTime(team.submittedAt)}` : event.name}
+              </p>
             )}
-          </Panel>
-          <Panel label="SUBMISSION / CAPTAIN" title="Lock this team">
-            {!isCaptain ? (
-              <p className="muted-copy">Only the team captain can submit the roster.</p>
-            ) : team.status !== "draft" ? (
-              <div className="submission-confirmed">
-                <Badge tone="success">submitted</Badge>
-                <p>
-                  This roster is locked for organizer review
-                  {team.submittedAt ? ` since ${new Date(team.submittedAt).toLocaleString()}` : ""}.
-                </p>
-              </div>
-            ) : (
-              <div className="team-submit-block">
-                {submitBlockers.length > 0 ? (
-                  <ul className="terminal-list team-blockers">
-                    {submitBlockers.map((blocker) => (
-                      <li key={blocker}>{blocker}</li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="muted-copy">
-                    The roster and all evidence profiles are ready. Submission locks membership.
-                  </p>
-                )}
-                <ActionButton
-                  disabled={submitBlockers.length > 0 || submitTeam.isPending}
-                  onClick={() => submitTeam.mutate(team.id)}
-                >
-                  {submitTeam.isPending ? "Submitting…" : "Submit team"}
-                </ActionButton>
-              </div>
-            )}
-            {team.status === "draft" ? (
-              <div className="team-leave-row">
-                <p>
-                  Leaving removes you from this roster. If you are captain, captaincy transfers to
-                  the earliest joined member.
-                </p>
-                <ActionButton
-                  tone="danger"
-                  disabled={leaveTeam.isPending}
-                  onClick={() => leaveTeam.mutate(team.id)}
-                >
-                  {leaveTeam.isPending ? "Leaving…" : "Leave team"}
-                </ActionButton>
-              </div>
+            {draft ? (
+              <p className={submitBlocker ? "text-warn" : "dim"}>
+                {submitBlocker
+                  ? `~ ${submitBlocker}`
+                  : isCaptain
+                    ? "Ready to submit"
+                    : "Captain submits"}
+              </p>
             ) : null}
-          </Panel>
+          </div>
         </div>
-      ) : (
-        <div className="team-choice-layout">
-          <Panel label="TEAM / START" title="Choose a path" className="span-two">
-            <div className="choice-grid">
-              <button
-                type="button"
-                className={mode === "create" ? "choice-card selected" : "choice-card"}
-                onClick={() => setMode("create")}
+
+        {errorNotice}
+
+        <Pane title="members" meta={`${team.members.length}/${event.teamSize.max}`} flush>
+          <ul className="grid">
+            {team.members.map((member) => (
+              <li
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 px-6 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto_6ch]"
+                key={member.id}
               >
-                <span>01</span>
-                <strong>Create a team</strong>
-                <p>Become captain and receive a private invite code and link.</p>
-              </button>
-              <button
-                type="button"
-                className={mode === "join" ? "choice-card selected" : "choice-card"}
-                onClick={() => setMode("join")}
-              >
-                <span>02</span>
-                <strong>Join with a code</strong>
-                <p>Use the eight-character code shared by a team captain.</p>
-              </button>
-              <button
-                type="button"
-                className={
-                  context.data.registration.lookingForTeam ? "choice-card selected" : "choice-card"
-                }
-                onClick={() => lookingForTeam.mutate(!context.data.registration.lookingForTeam)}
-                disabled={lookingForTeam.isPending}
-              >
-                <span>03</span>
-                <strong>
-                  {context.data.registration.lookingForTeam
-                    ? "Listed for teammates"
-                    : "Looking for a team"}
-                </strong>
-                <p>
-                  {context.data.registration.lookingForTeam
-                    ? "Select again to leave the pool."
-                    : "Share your name, college, and top three skills with applicants in this event."}
-                </p>
-              </button>
-            </div>
-            {mode === "create" ? (
-              <div className="inline-form">
-                <Field label="Team name" hint="2–80 characters. You become captain.">
-                  <TextInput
-                    placeholder="Enter a team name"
-                    value={teamName}
-                    maxLength={80}
-                    onChange={(event) => setTeamName(event.target.value)}
-                  />
-                </Field>
-                <ActionButton
-                  disabled={teamName.trim().length < 2 || createTeam.isPending}
-                  onClick={() => createTeam.mutate()}
-                >
-                  {createTeam.isPending ? "Creating…" : "Create team"}
-                </ActionButton>
-              </div>
-            ) : null}
-            {mode === "join" ? (
-              <div className="inline-form">
-                <Field label="Invite code">
-                  <TextInput
-                    placeholder="8-character code"
-                    value={inviteCode}
-                    maxLength={12}
-                    onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
-                  />
-                </Field>
-                <ActionButton
-                  disabled={inviteCode.replace(/[^A-Z0-9]/g, "").length !== 8 || joinTeam.isPending}
-                  onClick={() => joinTeam.mutate()}
-                >
-                  {joinTeam.isPending ? "Joining…" : "Join team"}
-                </ActionButton>
-              </div>
-            ) : null}
-          </Panel>
-          <Panel label="RULES / EVENT" title={context.data.event.name}>
-            <ul className="terminal-list">
-              <li>One team per person for each event.</li>
-              <li>Only the captain can submit or remove members.</li>
-              <li>The team locks when registration closes.</li>
-              <li>
-                This event requires {context.data.event.teamSize.min}–
-                {context.data.event.teamSize.max} members.
+                <span className="flex min-w-0 flex-wrap items-baseline gap-x-3">
+                  <span className="font-bold">{member.name}</span>
+                  <span className="dim">@{member.github}</span>
+                  {member.id === team.captainId ? <span className="text-info">captain</span> : null}
+                </span>
+                <StateTag state={member.profileStatus} />
+                <span className="col-span-2 sm:col-span-1 sm:text-right">
+                  {isCaptain && member.id !== team.captainId && draft ? (
+                    <TextAction
+                      tone="danger"
+                      disabled={removeMember.isPending}
+                      aria-label={`Remove ${member.name} from the team`}
+                      onClick={() => removeMember.mutate({ id: team.id, memberId: member.id })}
+                    >
+                      remove
+                    </TextAction>
+                  ) : null}
+                </span>
               </li>
-            </ul>
-            {context.data.event.registrationClosesAt ? (
-              <div className="deadline-readout">
-                <span>REGISTRATION CLOSES</span>
-                <strong>
-                  {new Date(context.data.event.registrationClosesAt).toLocaleString()}
-                </strong>
-              </div>
-            ) : null}
-          </Panel>
-        </div>
-      )}
-    </div>
+            ))}
+          </ul>
+        </Pane>
+
+        <TeamFitPane teamId={team.id} />
+        {draft && team.members.length < event.teamSize.max ? (
+          <TeammateSuggestions eventId={eventId} />
+        ) : null}
+
+        {draft ? (
+          <div>
+            <TextAction
+              tone="danger"
+              disabled={leaveTeam.isPending}
+              onClick={() => leaveTeam.mutate(team.id)}
+            >
+              {leaveTeam.isPending ? "leaving…" : "leave team"}
+            </TextAction>
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+
+  const choiceClass =
+    "grid gap-2 border border-(--frame) p-6 text-left font-display text-2xl hover:border-accent aria-[expanded=true]:border-accent aria-[expanded=true]:text-accent aria-[pressed=true]:border-accent disabled:opacity-60";
+
+  return (
+    <section className="grid gap-6" aria-label="Team">
+      <h2 className="font-display text-3xl">
+        team{" "}
+        <span className="dim text-xl">
+          teams of {event.teamSize.min}–{event.teamSize.max}
+        </span>
+      </h2>
+      {errorNotice}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <button
+          type="button"
+          className={choiceClass}
+          aria-expanded={mode === "create"}
+          onClick={() => setMode("create")}
+        >
+          Create a team
+        </button>
+        <button
+          type="button"
+          className={choiceClass}
+          aria-expanded={mode === "join"}
+          onClick={() => setMode("join")}
+        >
+          Join with a code
+        </button>
+        <button
+          type="button"
+          className={choiceClass}
+          aria-pressed={listed}
+          disabled={lookingForTeam.isPending}
+          onClick={() => lookingForTeam.mutate(!listed)}
+        >
+          Looking for a team
+          {listed ? <StateTag state="ready" label="listed" /> : null}
+        </button>
+      </div>
+
+      {mode === "create" ? (
+        <form
+          className="flex flex-wrap items-end gap-4"
+          onSubmit={(formEvent) => {
+            formEvent.preventDefault();
+            if (teamName.trim().length >= 2) createTeam.mutate();
+          }}
+        >
+          <Field label="Team name" className="min-w-0 flex-[1_1_20rem]" required>
+            <TextInput
+              value={teamName}
+              maxLength={80}
+              onChange={(changeEvent) => setTeamName(changeEvent.target.value)}
+            />
+          </Field>
+          <ActionButton
+            tone="primary"
+            type="submit"
+            disabled={teamName.trim().length < 2 || createTeam.isPending}
+          >
+            {createTeam.isPending ? "Creating…" : "Create team"}
+          </ActionButton>
+        </form>
+      ) : null}
+      {mode === "join" ? (
+        <form
+          className="flex flex-wrap items-end gap-4"
+          onSubmit={(formEvent) => {
+            formEvent.preventDefault();
+            if (inviteCode.replace(/[^A-Z0-9]/g, "").length === 8) joinTeam.mutate();
+          }}
+        >
+          <Field label="Invite code" className="min-w-0 flex-[1_1_20rem]" required>
+            <TextInput
+              value={inviteCode}
+              maxLength={12}
+              autoCapitalize="characters"
+              onChange={(changeEvent) => setInviteCode(changeEvent.target.value.toUpperCase())}
+            />
+          </Field>
+          <ActionButton
+            tone="primary"
+            type="submit"
+            disabled={inviteCode.replace(/[^A-Z0-9]/g, "").length !== 8 || joinTeam.isPending}
+          >
+            {joinTeam.isPending ? "Joining…" : "Join team"}
+          </ActionButton>
+        </form>
+      ) : null}
+      <TeammateSuggestions eventId={eventId} />
+    </section>
   );
 }
 
-export function ParticipantStatusPage() {
+/** Covered / missing per published requirement, best member and level. Never a score or rank. */
+function TeamFitPane({ teamId }: { teamId: string }) {
+  const fit = useQuery({
+    queryKey: ["participant-team-fit", teamId],
+    queryFn: () => getParticipantTeamFit(teamId),
+    retry: false,
+  });
+  if (fit.isPending) return <LoadingState label="checking fit" />;
+  if (fit.isError)
+    return <ErrorState message={fit.error.message} retry={() => void fit.refetch()} />;
+  if (fit.data.length === 0) return null;
+  const missing = fit.data.filter((row) => !row.covered);
+  return (
+    <Pane title="team fit" meta={`${fit.data.length - missing.length}/${fit.data.length} covered`}>
+      <div className="grid gap-4">
+        {missing.length > 0 ? (
+          <p className="text-warn">
+            ~ missing {missing.map((row) => skillLabel(row.skill)).join(", ")}
+          </p>
+        ) : (
+          <p className="text-accent">✓ every requirement covered</p>
+        )}
+        <SkillGroups items={fit.data} idOf={(row) => row.skill}>
+          {(row) => (
+            <div
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-1 sm:grid-cols-[18ch_auto_minmax(0,1fr)]"
+              key={row.skill}
+            >
+              <span className="truncate">{skillLabel(row.skill)}</span>
+              <Bar
+                value={row.level}
+                target={row.target}
+                label={skillLabel(row.skill)}
+                {...(row.covered ? {} : { tone: "warn" as const })}
+              />
+              <span className={`col-span-2 sm:col-span-1 ${row.covered ? "dim" : "text-warn"}`}>
+                {row.covered
+                  ? row.best?.name
+                  : row.best
+                    ? `~ best ${row.best.name}`
+                    : "~ no evidence yet"}
+              </span>
+            </div>
+          )}
+        </SkillGroups>
+      </div>
+    </Pane>
+  );
+}
+
+/** Opted-in, teamless applicants of the same event who would fill this team's gaps. */
+function TeammateSuggestions({ eventId }: { eventId: string }) {
+  const suggestions = useQuery({
+    queryKey: ["participant-teammates", eventId],
+    queryFn: () => getTeammateSuggestions(eventId),
+    retry: false,
+  });
+  if (!suggestions.data?.length) return null;
+  return (
+    <Details summary="suggested teammates" meta={suggestions.data.length}>
+      <ul className="grid gap-4">
+        {suggestions.data.map((person) => (
+          <li className="grid gap-1" key={person.id}>
+            <p className="flex flex-wrap items-baseline gap-x-3">
+              <span className="font-bold">{person.name}</span>
+              {person.college ? <span className="dim">{person.college}</span> : null}
+              <span className="text-accent">
+                + {person.fills.map((skill) => skillLabel(skill)).join(", ")}
+              </span>
+            </p>
+            <p className="flex flex-wrap gap-x-4">
+              {splitSkills(person.topSkills, (skill) => skill.id).map((group) => (
+                <span key={group.label}>
+                  <span className="dim">{group.label} </span>
+                  {group.items.map((skill) => (
+                    <span className="mr-3 whitespace-nowrap" key={skill.id}>
+                      {skillLabel(skill.id)} {skill.level.toFixed(1)}
+                    </span>
+                  ))}
+                </span>
+              ))}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </Details>
+  );
+}
+
+/** Confirm or decline a selected place before the RSVP deadline. */
+function RsvpBlock({ applicationId }: { applicationId: string }) {
+  const queryClient = useQueryClient();
+  const { post } = useStatusLine();
+  const [confirmDecline, setConfirmDecline] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const rsvp = useQuery({
+    queryKey: ["participant-rsvp", applicationId],
+    queryFn: () => getParticipantRsvp(applicationId),
+    retry: false,
+  });
+  const respond = useMutation({
+    mutationFn: (answer: "confirm" | "decline") => respondParticipantRsvp(applicationId, answer),
+    onSuccess: async (result) => {
+      post(result.status === "confirmed" ? "Attendance confirmed." : "Place declined.");
+      setConfirmDecline(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["participant-rsvp", applicationId] }),
+        queryClient.invalidateQueries({ queryKey: ["participant-application"] }),
+        queryClient.invalidateQueries({ queryKey: ["participant-overview"] }),
+      ]);
+    },
+  });
+  if (rsvp.isPending) return <LoadingState label="loading RSVP" />;
+  if (rsvp.isError) {
+    return <ErrorState message={rsvp.error.message} retry={() => void rsvp.refetch()} />;
+  }
+  const deadline = rsvp.data.rsvpDeadlineAt;
+  const remaining = deadline ? countdown(deadline, now) : null;
+  if (!rsvp.data.canRespond || !remaining || !deadline) {
+    return <Notice tone="warn">RSVP closed.</Notice>;
+  }
+  return (
+    <Pane title="rsvp" meta={`by ${formatDateTime(deadline)}`} active>
+      <div className="grid gap-6">
+        <p className="grid">
+          <span className="font-display text-4xl leading-none text-warn glow sm:text-5xl">
+            {remaining}
+          </span>
+          <span className="dim">until RSVP closes</span>
+        </p>
+        {respond.error ? (
+          <ErrorState
+            message={respond.error instanceof Error ? respond.error.message : "RSVP failed"}
+          />
+        ) : null}
+        <div className="flex flex-wrap items-center justify-end gap-4">
+          {confirmDecline ? (
+            <>
+              <span className="text-error">Give up your place?</span>
+              <TextAction onClick={() => setConfirmDecline(false)}>keep it</TextAction>
+              <ActionButton
+                tone="danger"
+                disabled={respond.isPending}
+                onClick={() => respond.mutate("decline")}
+              >
+                {respond.isPending ? "Declining…" : "Yes, decline"}
+              </ActionButton>
+            </>
+          ) : (
+            <>
+              <ActionButton
+                tone="danger"
+                disabled={respond.isPending}
+                onClick={() => setConfirmDecline(true)}
+              >
+                Decline
+              </ActionButton>
+              <ActionButton
+                tone="primary"
+                disabled={respond.isPending}
+                onClick={() => respond.mutate("confirm")}
+              >
+                {respond.isPending ? "Confirming…" : "Confirm attendance"}
+              </ActionButton>
+            </>
+          )}
+        </div>
+      </div>
+    </Pane>
+  );
+}
+
+const statusCopy = {
+  draft: "Not submitted yet.",
+  submitted: "Waiting for the shortlist.",
+  under_review: "Registration closed. Under review.",
+  selected: "You're in. RSVP before the deadline.",
+  waitlisted: "On the waitlist. We'll email you if a place opens.",
+  not_selected: "Not selected this time.",
+  confirmed: "You're confirmed. See you there.",
+  declined: "You declined your place.",
+} as const;
+
+export function ParticipantApplicationPage() {
   const { applicationId } = useParams();
   const hasApplication = applicationId && applicationId !== "current";
   const application = useQuery({
@@ -1150,151 +1343,181 @@ export function ParticipantStatusPage() {
     enabled: Boolean(hasApplication),
     retry: false,
   });
-  const statusCopy = {
-    draft: "Your evidence profile and team can still be completed before registration closes.",
-    submitted:
-      "Your team is submitted. You can review your own evidence while the organizer prepares the shortlist.",
-    under_review:
-      "The organizer is reviewing submitted teams. Rank and implied odds remain private.",
-    selected: "Your team was selected. Confirm attendance before the RSVP deadline.",
-    waitlisted:
-      "Your team is on the waitlist. Other teams and hidden shortlist parameters remain private.",
-    not_selected:
-      "Your team was not selected for this event. Your own evidence profile remains available.",
-    confirmed: "Your attendance is confirmed for this event.",
-    declined: "Your team declined its selected place.",
-  } as const;
+  const data = application.data;
+  const timeline = data?.event.timeline;
+  const now = Date.now();
+  const milestones: Array<[string, string]> = timeline
+    ? [
+        ["registration closes", timeline.registrationClosesAt],
+        ["shortlist published", timeline.shortlistPublishesAt],
+        ["RSVP deadline", timeline.rsvpDeadlineAt],
+        ["event starts", timeline.eventStartsAt],
+      ]
+    : [];
 
   return (
-    <div className="portal-page">
-      <PageHeading
-        eyebrow="PARTICIPANT / STATUS"
-        title="Application status"
-        description="Your team decision, deadlines, and RSVP appear here when an application exists."
-      />
-      <Panel
-        label="APPLICATION / DECISION"
-        title={
-          application.data?.event.name ??
-          (hasApplication ? "Loading application" : "No active application")
-        }
-      >
-        {application.isPending && hasApplication ? (
-          <div className="loading-state">Loading application…</div>
-        ) : null}
-        {application.isError || !hasApplication ? (
-          <EmptyState
-            title={hasApplication ? "Application not found" : "Start with a published event"}
-            action={<ActionLink to="/">Browse events</ActionLink>}
-          >
-            {hasApplication
-              ? "This application could not be loaded for the signed-in account."
-              : "Your application status will never expose another team's rank or score."}
-          </EmptyState>
-        ) : null}
-        {application.data ? (
-          <div className="application-decision">
-            <Badge
-              tone={
-                application.data.status === "selected" || application.data.status === "confirmed"
-                  ? "success"
-                  : "neutral"
-              }
-            >
-              {application.data.status.replace("_", " ")}
-            </Badge>
-            <h2>{statusCopy[application.data.status]}</h2>
-            <dl className="compact-definition-list">
-              <div>
-                <dt>Last updated</dt>
-                <dd>{new Date(application.data.updatedAt).toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt>Team</dt>
-                <dd>{application.data.teamId ? "Connected" : "Not formed"}</dd>
-              </div>
-              <div>
-                <dt>Timezone</dt>
-                <dd>{application.data.event.timeline?.timezone ?? "Unavailable"}</dd>
-              </div>
-            </dl>
-            {!application.data.teamId && application.data.status === "draft" ? (
-              <ActionLink to="/participant/team/current">Create or join a team</ActionLink>
-            ) : null}
+    <div className="mx-auto grid max-w-3xl gap-12">
+      <ScreenHead title={data?.event.name ?? "Application"} />
+
+      {application.isPending && hasApplication ? <LoadingState label="loading" /> : null}
+      {application.isError || !hasApplication ? (
+        <EmptyState
+          title={hasApplication ? "Application not found" : "Start with a published event"}
+          action={
+            <ActionLink to={hasApplication ? "/participant" : "/"}>
+              {hasApplication ? "Your applications" : "Browse events"}
+            </ActionLink>
+          }
+        />
+      ) : null}
+
+      {data ? (
+        <div className="grid gap-4">
+          <StateTag state={data.status} size="lg" />
+          <p className="text-lg">{statusCopy[data.status]}</p>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <Link className="tui-link" to="/participant/profile">
+              profile
+            </Link>
+            <Link className="tui-link" to={`/h/${data.event.slug}`}>
+              event page
+            </Link>
           </div>
-        ) : null}
-      </Panel>
-      <section className="status-legend" aria-label="Possible application states">
-        <span>Possible states</span>
-        {[
-          "draft",
-          "submitted",
-          "under review",
-          "selected",
-          "waitlisted",
-          "not selected",
-          "confirmed",
-          "declined",
-        ].map((status) => (
-          <code key={status}>{status}</code>
-        ))}
-      </section>
+        </div>
+      ) : null}
+
+      {data?.status === "selected" ? <RsvpBlock applicationId={data.id} /> : null}
+
+      {data ? <TeamSection eventId={data.event.id} /> : null}
+
+      {timeline ? (
+        <Details summary="deadlines">
+          <ol className="grid gap-2">
+            {milestones.map(([label, at]) => {
+              const passed = Date.parse(at) <= now;
+              return (
+                <li
+                  className="grid grid-cols-[2ch_1fr] gap-x-2 sm:grid-cols-[2ch_1fr_auto]"
+                  key={label}
+                >
+                  <span aria-hidden="true" className={passed ? "dim" : "text-accent"}>
+                    {passed ? "●" : "○"}
+                  </span>
+                  <span className={passed ? "dim" : undefined}>
+                    {label}
+                    <span className="sr-only">{passed ? " (passed)" : ""}</span>
+                  </span>
+                  <time className="dim col-start-2 sm:col-start-3" dateTime={at}>
+                    {formatDateTime(at)}
+                  </time>
+                </li>
+              );
+            })}
+          </ol>
+        </Details>
+      ) : null}
     </div>
   );
 }
 
 export function ParticipantDataPage() {
-  const actions = useMemo(
-    () => [
-      {
-        title: "Download your data",
-        detail: "Export your profile, applications, team memberships, and reports.",
-      },
-      {
-        title: "Revoke profile consent",
-        detail: "Stop future automated processing. Existing event decisions remain auditable.",
-      },
-      {
-        title: "Delete your account",
-        detail: "Request deletion subject to event audit and legal retention requirements.",
-      },
-    ],
-    [],
-  );
+  const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { post } = useStatusLine();
+  const [confirmation, setConfirmation] = useState("");
+  // Both actions end the session; drop every cached participant screen with it.
+  const signedOut = (message: string) => {
+    queryClient.setQueryData(["current-user"], null);
+    queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "current-user" });
+    post(message);
+    navigate("/");
+  };
+  const revoke = useMutation({
+    mutationFn: revokeGithubAccess,
+    onSuccess: () => signedOut("GitHub access revoked."),
+  });
+  const deletion = useMutation({
+    mutationFn: deleteParticipantAccount,
+    onSuccess: (result) =>
+      signedOut(result.githubRevoked ? "Account deleted." : "Deleted. Revoke on GitHub."),
+  });
 
   return (
-    <div className="portal-page">
-      <PageHeading
-        eyebrow="PARTICIPANT / DATA"
-        title="Data and consent"
-        description="See what the product uses, correct evidence, export your records, or request deletion."
-      />
-      <div className="data-settings-grid">
-        <Panel label="ACCESS / GITHUB" title="Connected account">
-          <EmptyState
-            title="No GitHub account connected"
-            action={<ActionLink to="/login">Connect GitHub</ActionLink>}
-          >
-            TalentRadar requests identity and email scopes only.
-          </EmptyState>
-        </Panel>
-        <Panel label="CONTROL / REQUESTS" title="Your controls">
-          <div className="settings-actions">
-            {actions.map((action, index) => (
-              <div key={action.title}>
-                <span>0{index + 1}</span>
-                <div>
-                  <strong>{action.title}</strong>
-                  <p>{action.detail}</p>
-                </div>
-                <ActionButton tone={index === 2 ? "danger" : "secondary"} disabled>
-                  Open
+    <div className="mx-auto grid max-w-2xl gap-10">
+      <ScreenHead title="Your data" />
+      {account.isPending ? <LoadingState label="loading" /> : null}
+      {account.data ? (
+        <>
+          <Pane title="account">
+            <div className="grid gap-6">
+              <KeyValue
+                items={[
+                  ["github", `@${account.data.login}`],
+                  ["name", account.data.name],
+                  ["email", account.data.email ?? "not shared"],
+                  ["access", "public repos, read-only"],
+                ]}
+              />
+              <div className="flex flex-wrap gap-2">
+                <ActionAnchor href={participantDataExportUrl} download>
+                  Download my data
+                </ActionAnchor>
+                <ActionButton disabled={revoke.isPending} onClick={() => revoke.mutate()}>
+                  {revoke.isPending ? "Revoking…" : "Revoke GitHub access"}
                 </ActionButton>
               </div>
-            ))}
-          </div>
-        </Panel>
-      </div>
+              {revoke.isError ? (
+                <Notice tone="error" tag="error">
+                  {revoke.error.message}
+                </Notice>
+              ) : null}
+            </div>
+          </Pane>
+          <Details summary="delete account">
+            <form
+              className="grid gap-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (confirmation === "delete") deletion.mutate();
+              }}
+            >
+              <Field label='Type "delete" to confirm' hint="Cannot be undone" required>
+                <TextInput
+                  value={confirmation}
+                  onChange={(event) => setConfirmation(event.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </Field>
+              <div className="flex justify-end">
+                <ActionButton
+                  type="submit"
+                  tone="danger"
+                  disabled={confirmation !== "delete" || deletion.isPending}
+                >
+                  {deletion.isPending ? "Deleting…" : "Delete my account"}
+                </ActionButton>
+              </div>
+              {deletion.isError ? (
+                <Notice tone="error" tag="error">
+                  {deletion.error.message}
+                </Notice>
+              ) : null}
+            </form>
+          </Details>
+        </>
+      ) : null}
+      {!account.isPending && !account.data ? (
+        <EmptyState
+          title="No GitHub account connected"
+          action={
+            <ActionLink to="/login" tone="primary">
+              Sign in with GitHub
+            </ActionLink>
+          }
+        />
+      ) : null}
     </div>
   );
 }

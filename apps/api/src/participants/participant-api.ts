@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
+import { taxonomyVersion } from "@talentradar/shared";
 import type { Request, Response } from "express";
 import express from "express";
 import type { Db } from "mongodb";
@@ -9,6 +10,7 @@ import { decryptSecret } from "../auth/crypto.js";
 import type { Authentication } from "../auth/github.js";
 import type { Environment } from "../config/environment.js";
 import type {
+  AssessmentDocument,
   HackathonDocument,
   JobDocument,
   PersonDocument,
@@ -19,6 +21,8 @@ import type {
 import { collections } from "../database/mongo.js";
 import type { ApiModule } from "../events/organizer-events.js";
 import { enqueueJob } from "../jobs/queue.js";
+import { assessmentCacheKey } from "../profile-pipeline/cache-key.js";
+import { type CvDetails, extractCvDetails, pdfText } from "./cv-details.js";
 
 const GithubRepositorySchema = z.object({
   full_name: z.string().regex(/^[^/]+\/[^/]+$/),
@@ -46,11 +50,9 @@ const ApplicationSchema = z.object({
     .min(1)
     .max(6),
   consent: z.literal(true),
-  syntheticCv: z.boolean().default(false),
 });
 
 const MAX_CV_BYTES = 2 * 1024 * 1024;
-const CV_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const GITHUB_API_VERSION = "2026-03-10";
 
 interface RepositoryChoice {
@@ -146,6 +148,37 @@ async function githubRepositories(
   });
 }
 
+/** The default branch's HEAD commit, which is what `fetch_repo` clones; null when unknown. */
+async function headSha(
+  account: UserDocument,
+  repository: RepositoryChoice,
+  sessionSecret: string,
+  fetchImplementation: typeof fetch,
+): Promise<string | null> {
+  const token = decryptSecret(account.encryptedAccessToken, sessionSecret);
+  const path = repository.fullName.split("/").map(encodeURIComponent).join("/");
+  const response = await fetchImplementation(
+    `https://api.github.com/repos/${path}/commits/${encodeURIComponent(repository.defaultBranch)}`,
+    {
+      headers: {
+        accept: "application/vnd.github.sha",
+        authorization: `Bearer ${token}`,
+        "x-github-api-version": GITHUB_API_VERSION,
+      },
+    },
+  );
+  if (!response.ok) return null;
+  const sha = (await response.text()).trim();
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+}
+
+interface ProfileBuildInput {
+  account: UserDocument;
+  person: PersonDocument & { currentCvFileId: ObjectId };
+  displayName: string;
+  repositories: RepositoryChoice[];
+}
+
 function uploadBuffer(
   bucket: GridFSBucket,
   filename: string,
@@ -168,9 +201,115 @@ export function createParticipantApi(
   environment: Environment,
   fetchImplementation: typeof fetch = fetch,
 ): ApiModule {
-  const sessionSecret = environment.SESSION_SECRET;
-  if (!sessionSecret) throw new Error("Participant APIs require a session secret");
+  if (!environment.SESSION_SECRET) throw new Error("Participant APIs require a session secret");
+  const sessionSecret: string = environment.SESSION_SECRET;
   const cvBucket = new GridFSBucket(db, { bucketName: "cv" });
+
+  function latestProfileOf(personId: ObjectId) {
+    return db
+      .collection<ProfileDocument>(collections.profiles)
+      .find({ personId })
+      .sort({ version: -1 })
+      .limit(1)
+      .next();
+  }
+
+  /**
+   * True when the latest ready profile was built from exactly these inputs: its assessment's
+   * cache key equals the key for the repos' current HEAD commits, the current CV hash, and the
+   * configured model/prompt versions. Any unknown input (a SHA GitHub would not give us) means
+   * "changed", so the worst case is a rebuild, which the judge's own cache still short-circuits.
+   * Ceiling: a selected repo that fetch_repo excluded is absent from the stored key, so that
+   * profile is rebuilt every time; upgrade by storing the full input key on the profile.
+   */
+  async function inputsUnchanged(
+    profile: ProfileDocument,
+    input: ProfileBuildInput,
+  ): Promise<boolean> {
+    if (profile.status !== "ready" || !profile.assessmentId) return false;
+    const [assessment, cvFile] = await Promise.all([
+      db
+        .collection<AssessmentDocument>(collections.assessments)
+        .findOne({ _id: profile.assessmentId }, { projection: { cacheKey: 1 } }),
+      db
+        .collection<{ _id: ObjectId; metadata?: { sha256?: unknown } }>("cv.files")
+        .findOne({ _id: input.person.currentCvFileId }),
+    ]);
+    const cvHash = cvFile?.metadata?.sha256;
+    if (!assessment || typeof cvHash !== "string") return false;
+    const shas = await Promise.all(
+      input.repositories.map((repository) =>
+        headSha(input.account, repository, sessionSecret, fetchImplementation),
+      ),
+    );
+    if (shas.some((sha) => sha === null)) return false;
+    const key = assessmentCacheKey(
+      input.repositories.map((repository, index) => ({
+        repo: repository.fullName,
+        sha: shas[index] as string,
+      })),
+      cvHash,
+      environment,
+    );
+    return key === assessment.cacheKey;
+  }
+
+  /** Reuses the latest ready profile when nothing changed; otherwise starts a new version. */
+  async function ensureProfile(
+    input: ProfileBuildInput,
+  ): Promise<{ profile: ProfileDocument; reused: boolean }> {
+    const { person } = input;
+    const latestProfile = await latestProfileOf(person._id);
+    if (latestProfile && (await inputsUnchanged(latestProfile, input))) {
+      if (latestProfile.displayName !== input.displayName) {
+        await db
+          .collection<ProfileDocument>(collections.profiles)
+          .updateOne(
+            { _id: latestProfile._id },
+            { $set: { displayName: input.displayName, updatedAt: new Date() } },
+          );
+      }
+      return { profile: { ...latestProfile, displayName: input.displayName }, reused: true };
+    }
+
+    const now = new Date();
+    const profileId = new ObjectId();
+    const profile: ProfileDocument = {
+      _id: profileId,
+      personId: person._id,
+      displayName: input.displayName,
+      status: "pending",
+      version: (latestProfile?.version ?? 0) + 1,
+      repos: input.repositories.map((repository) => ({
+        fullName: repository.fullName,
+        included: true,
+      })),
+      skills: [],
+      novelty: 0,
+      flags: [],
+      taxonomyVersion,
+      createdAt: now,
+      updatedAt: now,
+    };
+    await db.collection<ProfileDocument>(collections.profiles).insertOne(profile);
+    await Promise.all([
+      ...input.repositories.map((repository) =>
+        enqueueJob(db, "fetch_repo", {
+          profileId: profileId.toHexString(),
+          personId: person._id.toHexString(),
+          repository: repository.fullName,
+          ...(repository.pushedAt ? { pushedAt: repository.pushedAt } : {}),
+          fork: repository.fork,
+        }),
+      ),
+      enqueueJob(db, "render_cv", {
+        profileId: profileId.toHexString(),
+        personId: person._id.toHexString(),
+        fileId: person.currentCvFileId.toHexString(),
+      }),
+    ]);
+    return { profile, reused: false };
+  }
 
   return {
     register(app) {
@@ -206,6 +345,7 @@ export function createParticipantApi(
             .findOne({ userId: account._id });
           if (!person) throw new Error("Verified person record is missing");
           const now = new Date();
+          // Retention is enforced by sweepExpiredCvs (90 days after the last event using it).
           const fileId = await uploadBuffer(
             cvBucket,
             pdfFileName(request.headers["x-file-name"]),
@@ -215,9 +355,19 @@ export function createParticipantApi(
               personId: person._id,
               sha256: createHash("sha256").update(request.body).digest("hex"),
               uploadedAt: now,
-              expiresAt: new Date(now.getTime() + CV_RETENTION_MS),
             },
           );
+          // Prefill only: the participant confirms every field. A PDF without a readable text
+          // layer (a scan) simply prefills nothing.
+          let details: CvDetails = {};
+          try {
+            details = extractCvDetails(await pdfText(request.body));
+          } catch (error) {
+            console.warn(
+              "CV text extraction failed",
+              error instanceof Error ? error.message : "unknown error",
+            );
+          }
           await db
             .collection<PersonDocument>(collections.people)
             .updateOne({ _id: person._id }, { $set: { currentCvFileId: fileId, updatedAt: now } });
@@ -227,6 +377,7 @@ export function createParticipantApi(
               name: pdfFileName(request.headers["x-file-name"]),
               size: request.body.length,
             },
+            details,
           });
         },
       );
@@ -403,13 +554,6 @@ export function createParticipantApi(
           });
           return;
         }
-        if (environment.MODEL_DATA_POLICY === "synthetic_only" && !parsed.data.syntheticCv) {
-          response.status(422).json({
-            error: "synthetic_cv_required",
-            message: "This free-tier deployment accepts synthetic CVs only",
-          });
-          return;
-        }
 
         const now = new Date();
         const event = await db.collection<HackathonDocument>(collections.hackathons).findOne({
@@ -499,55 +643,77 @@ export function createParticipantApi(
           );
         if (!registration) throw new Error("Application could not be saved");
 
-        const latestProfile = await db
-          .collection<ProfileDocument>(collections.profiles)
-          .find({ personId: person._id })
-          .sort({ version: -1 })
-          .limit(1)
-          .next();
-        const profileId = new ObjectId();
-        const profile: ProfileDocument = {
-          _id: profileId,
-          personId: person._id,
+        const selected = parsed.data.repositories.flatMap((fullName) => {
+          const repository = availableRepositories.find((choice) => choice.fullName === fullName);
+          return repository ? [repository] : [];
+        });
+        const { profile, reused } = await ensureProfile({
+          account,
+          person: { ...person, currentCvFileId: person.currentCvFileId },
           displayName: parsed.data.details.name,
-          status: "pending",
-          version: (latestProfile?.version ?? 0) + 1,
-          repos: parsed.data.repositories.map((fullName) => ({ fullName, included: true })),
-          skills: [],
-          novelty: 0,
-          flags: [],
-          taxonomyVersion: "2",
-          createdAt: now,
-          updatedAt: now,
-        };
-        await db.collection<ProfileDocument>(collections.profiles).insertOne(profile);
-        const repositoriesByName = new Map(
-          availableRepositories.map((repository) => [repository.fullName, repository]),
-        );
-        await Promise.all([
-          ...parsed.data.repositories.map((repository) => {
-            const metadata = repositoriesByName.get(repository);
-            return enqueueJob(db, "fetch_repo", {
-              profileId: profileId.toHexString(),
-              personId: person._id.toHexString(),
-              repository,
-              ...(metadata?.pushedAt ? { pushedAt: metadata.pushedAt } : {}),
-              fork: metadata?.fork ?? false,
-            });
-          }),
-          enqueueJob(db, "render_cv", {
-            profileId: profileId.toHexString(),
-            personId: person._id.toHexString(),
-            fileId: person.currentCvFileId.toHexString(),
-          }),
-        ]);
+          repositories: selected,
+        });
 
         response.status(201).json({
           application: { id: registration._id.toHexString(), status: registration.status },
           profile: {
-            id: profileId.toHexString(),
+            id: profile._id.toHexString(),
             status: profile.status,
             version: profile.version,
+            reused,
+          },
+        });
+      });
+
+      // "Replace CV" on the profile page: upload via POST /cv, then rebuild with the same repos.
+      app.post("/api/participant/profile/rebuild", async (request, response) => {
+        const account = await currentAccount(authentication, db, request, response);
+        if (!account) return;
+        const person = await db
+          .collection<PersonDocument>(collections.people)
+          .findOne({ userId: account._id });
+        if (!person?.currentCvFileId) {
+          response
+            .status(422)
+            .json({ error: "cv_required", message: "Upload a PDF CV before rebuilding" });
+          return;
+        }
+        const [latestRegistration, latestProfile] = await Promise.all([
+          db
+            .collection<RegistrationDocument>(collections.registrations)
+            .find({ personId: person._id })
+            .sort({ updatedAt: -1 })
+            .limit(1)
+            .next(),
+          latestProfileOf(person._id),
+        ]);
+        const names =
+          latestRegistration?.selectedRepositories ??
+          latestProfile?.repos.map((repository) => repository.fullName) ??
+          [];
+        const available = await githubRepositories(account, sessionSecret, fetchImplementation);
+        const selected = available.filter(
+          (repository) => repository.eligible && names.includes(repository.fullName),
+        );
+        if (selected.length === 0) {
+          response.status(422).json({
+            error: "repository_not_eligible",
+            message: "None of your chosen repositories are still available; apply again",
+          });
+          return;
+        }
+        const { profile, reused } = await ensureProfile({
+          account,
+          person: { ...person, currentCvFileId: person.currentCvFileId },
+          displayName: latestProfile?.displayName ?? person.name,
+          repositories: selected,
+        });
+        response.status(reused ? 200 : 201).json({
+          profile: {
+            id: profile._id.toHexString(),
+            status: profile.status,
+            version: profile.version,
+            reused,
           },
         });
       });

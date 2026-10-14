@@ -1,13 +1,14 @@
 import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { detectTechnologies } from "@talentradar/shared";
+import { detectTechnologies, type TechnologyMatch } from "@talentradar/shared";
 import type { Db } from "mongodb";
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 import { decryptSecret } from "../auth/crypto.js";
 import type { PersonDocument, UserDocument } from "../database/models.js";
 import { collections } from "../database/mongo.js";
+import { githubFetch } from "../jobs/rate-limit.js";
 import type { JobContext } from "../jobs/worker.js";
 import { runCommand } from "./commands.js";
 
@@ -78,6 +79,7 @@ async function githubJson(
   url: string,
   token: string | undefined,
   fetchImplementation: typeof fetch,
+  signal: AbortSignal | undefined,
 ): Promise<unknown> {
   const response = await fetchImplementation(url, {
     headers: {
@@ -85,6 +87,7 @@ async function githubJson(
       ...(token ? { authorization: `Bearer ${token}` } : {}),
       "x-github-api-version": "2026-03-10",
     },
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok)
     throw new Error(`GitHub returned ${response.status} for ${new URL(url).pathname}`);
@@ -135,6 +138,98 @@ function twoLevelTree(files: string[]): string[] {
     .slice(0, 500);
 }
 
+export interface ExtractedCheckout {
+  commitSha: string;
+  hasTests: boolean;
+  hasCi: boolean;
+  containerized: boolean;
+  technologyMatches: TechnologyMatch[];
+  tree: string[];
+  readme?: string;
+  readmePath?: string;
+  selectedFiles: Array<{ path: string; content: string }>;
+  /** Lower-cased paths of the manifests that were read for technology detection. */
+  manifests: string[];
+}
+
+/**
+ * Stage 2 of a repository fetch: reads facts and samples files from an existing checkout.
+ * Changing what gets sampled here must bump `samplerVersion` in @talentradar/shared.
+ */
+export async function extractCheckout(
+  checkout: string,
+  options: {
+    repoTokenBudget: number;
+    languages: Record<string, number>;
+    signal?: AbortSignal | undefined;
+  },
+): Promise<ExtractedCheckout> {
+  const [shaResult, filesResult] = await Promise.all([
+    runCommand("git", ["-C", checkout, "rev-parse", "HEAD"], {
+      timeoutMs: 10_000,
+      signal: options.signal,
+    }),
+    runCommand("git", ["-C", checkout, "ls-files", "-z"], {
+      timeoutMs: 20_000,
+      signal: options.signal,
+    }),
+  ]);
+  const commitSha = shaResult.stdout.toString("utf8").trim();
+  const files = filesResult.stdout
+    .toString("utf8")
+    .split("\0")
+    .filter((file) => file && safePath(file));
+
+  const manifests: Record<string, string> = {};
+  for (const file of files) {
+    if (!manifestNames.has(path.basename(file).toLowerCase())) continue;
+    const content = await readSafeFile(checkout, file, 256 * 1024);
+    if (content) manifests[file.toLowerCase()] = content;
+  }
+  const readmePath = files.find((file) => /^readme(?:\.[^/]+)?$/i.test(file));
+  const readme = readmePath
+    ? (await readSafeFile(checkout, readmePath, 256 * 1024))
+        ?.split(/\r?\n/)
+        .slice(0, 300)
+        .join("\n")
+    : undefined;
+  const sourceCandidates = files
+    .filter((file) => sourceExtensions.has(path.extname(file).toLowerCase()))
+    .sort((left, right) => sourceScore(right) - sourceScore(left) || left.localeCompare(right));
+  const selectedFiles: Array<{ path: string; content: string }> = [];
+  let remainingCharacters = options.repoTokenBudget * 4;
+  for (const file of sourceCandidates) {
+    if (selectedFiles.length >= 8 || remainingCharacters <= 0) break;
+    const content = await readSafeFile(checkout, file, 40 * 1024);
+    if (!content || Buffer.byteLength(content) < 1024) continue;
+    const included = content.slice(0, remainingCharacters);
+    selectedFiles.push({ path: file, content: included });
+    remainingCharacters -= included.length;
+  }
+  const technologyMatches = detectTechnologies({
+    files: {
+      // Every tracked path, empty, so file/path/extension rules (Dockerfile → docker, *.csproj…)
+      // fire even when that file wasn't sampled. Real contents below override these on any
+      // collision; content-based detectors only read manifests and sampled files.
+      ...Object.fromEntries(files.map((file) => [file, ""])),
+      ...manifests,
+      ...Object.fromEntries(selectedFiles.map((file) => [file.path, file.content])),
+    },
+    languages: Object.keys(options.languages),
+  });
+  return {
+    commitSha,
+    hasTests: files.some((file) => /(^|\/)(__tests__|tests?|spec)(\/|\.)/i.test(file)),
+    hasCi: files.some((file) => file.startsWith(".github/workflows/")),
+    containerized: files.some((file) => /(^|\/)(dockerfile|docker-compose\.ya?ml)$/i.test(file)),
+    technologyMatches,
+    tree: twoLevelTree(files),
+    ...(readme && readmePath ? { readme, readmePath } : {}),
+    selectedFiles,
+    manifests: Object.keys(manifests),
+  };
+}
+
 export interface RepositoryHandlerOptions {
   db: Db;
   sessionSecret: string;
@@ -142,8 +237,119 @@ export interface RepositoryHandlerOptions {
   fetchImplementation?: typeof fetch;
 }
 
+export interface FetchRepositoryInput {
+  repository: string;
+  login: string;
+  token?: string | undefined;
+  pushedAt: string;
+  fork: boolean;
+  repoTokenBudget: number;
+  signal?: AbortSignal | undefined;
+  /** Defaults to the process-wide rate-limited GitHub fetch. */
+  fetchImplementation?: typeof fetch;
+  progress?: (code: string, message: string) => Promise<void>;
+}
+
+/** Reads GitHub facts, clones and extracts one repository: the fetch_repo job without the Db. */
+export async function fetchRepository(
+  input: FetchRepositoryInput,
+): Promise<Record<string, unknown>> {
+  const fetchImplementation = input.fetchImplementation ?? githubFetch;
+  const progress = input.progress ?? (async () => {});
+  const signal = input.signal;
+  const encodedRepository = input.repository.split("/").map(encodeURIComponent).join("/");
+
+  await progress("repo.metadata.started", `Reading GitHub facts for ${input.repository}`);
+  const [languagePayload, contributorPayload] = await Promise.all([
+    githubJson(
+      `https://api.github.com/repos/${encodedRepository}/languages`,
+      input.token,
+      fetchImplementation,
+      signal,
+    ),
+    githubJson(
+      `https://api.github.com/repos/${encodedRepository}/contributors?per_page=100&anon=1`,
+      input.token,
+      fetchImplementation,
+      signal,
+    ),
+  ]);
+  const languages = GithubLanguagesSchema.parse(languagePayload);
+  const contributors = GithubContributorsSchema.parse(contributorPayload);
+  const totalContributions = contributors.reduce(
+    (sum, contributor) => sum + contributor.contributions,
+    0,
+  );
+  const ownContributions =
+    contributors.find(
+      (contributor) => contributor.login.toLowerCase() === input.login.toLowerCase(),
+    )?.contributions ?? 0;
+  const authorship = totalContributions > 0 ? ownContributions / totalContributions : 0;
+  if (input.fork && ownContributions === 0) {
+    await progress(
+      "repo.skipped",
+      `${input.repository} is a fork with no commits by ${input.login}`,
+    );
+    return {
+      repository: input.repository,
+      included: false,
+      exclusionReason: "fork_without_authorship",
+    };
+  }
+
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "talentradar-repo-"));
+  const checkout = path.join(temporaryRoot, "checkout");
+  try {
+    await progress("repo.clone.started", `Cloning ${input.repository} at depth 1`);
+    await runCommand(
+      "git",
+      [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "protocol.file.allow=never",
+        "clone",
+        "--depth",
+        "1",
+        "--single-branch",
+        "--no-tags",
+        `https://github.com/${input.repository}.git`,
+        checkout,
+      ],
+      {
+        timeoutMs: 120_000,
+        signal,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
+      },
+    );
+    const extracted = await extractCheckout(checkout, {
+      repoTokenBudget: input.repoTokenBudget,
+      languages,
+      signal,
+    });
+    await progress(
+      "repo.clone.completed",
+      `Cloned ${input.repository} at ${extracted.commitSha.slice(0, 12)}`,
+    );
+    await progress(
+      "repo.extract.completed",
+      `${input.repository}: ${extracted.technologyMatches.length} technology hints, tests ${extracted.hasTests ? "found" : "not found"}, CI ${extracted.hasCi ? "found" : "not found"}`,
+    );
+    const { manifests: _manifests, ...facts } = extracted;
+    return {
+      repository: input.repository,
+      included: true,
+      pushedAt: input.pushedAt,
+      authorship,
+      languages,
+      ...facts,
+    };
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
 export function createFetchRepositoryHandler(options: RepositoryHandlerOptions) {
-  const fetchImplementation = options.fetchImplementation ?? fetch;
   return async ({ job, progress, signal }: JobContext): Promise<Record<string, unknown>> => {
     const payload = FetchRepositoryPayloadSchema.parse(job.payload);
     if (!payload.pushedAt) throw new Error(`${payload.repository} has no GitHub push timestamp`);
@@ -160,144 +366,16 @@ export function createFetchRepositoryHandler(options: RepositoryHandlerOptions) 
     const token = accessUser
       ? decryptSecret(accessUser.encryptedAccessToken, options.sessionSecret)
       : undefined;
-    const encodedRepository = payload.repository.split("/").map(encodeURIComponent).join("/");
-
-    await progress("repo.metadata.started", `Reading GitHub facts for ${payload.repository}`);
-    const [languagePayload, contributorPayload] = await Promise.all([
-      githubJson(
-        `https://api.github.com/repos/${encodedRepository}/languages`,
-        token,
-        fetchImplementation,
-      ),
-      githubJson(
-        `https://api.github.com/repos/${encodedRepository}/contributors?per_page=100&anon=1`,
-        token,
-        fetchImplementation,
-      ),
-    ]);
-    const languages = GithubLanguagesSchema.parse(languagePayload);
-    const contributors = GithubContributorsSchema.parse(contributorPayload);
-    const totalContributions = contributors.reduce(
-      (sum, contributor) => sum + contributor.contributions,
-      0,
-    );
-    const ownContributions =
-      contributors.find(
-        (contributor) => contributor.login.toLowerCase() === person.github.toLowerCase(),
-      )?.contributions ?? 0;
-    const authorship = totalContributions > 0 ? ownContributions / totalContributions : 0;
-    if (payload.fork && ownContributions === 0) {
-      await progress(
-        "repo.skipped",
-        `${payload.repository} is a fork with no commits by ${person.github}`,
-      );
-      return {
-        repository: payload.repository,
-        included: false,
-        exclusionReason: "fork_without_authorship",
-      };
-    }
-
-    const temporaryRoot = await mkdtemp(path.join(tmpdir(), "talentradar-repo-"));
-    const checkout = path.join(temporaryRoot, "checkout");
-    try {
-      await progress("repo.clone.started", `Cloning ${payload.repository} at depth 1`);
-      await runCommand(
-        "git",
-        [
-          "-c",
-          "core.hooksPath=/dev/null",
-          "-c",
-          "protocol.file.allow=never",
-          "clone",
-          "--depth",
-          "1",
-          "--single-branch",
-          "--no-tags",
-          `https://github.com/${payload.repository}.git`,
-          checkout,
-        ],
-        {
-          timeoutMs: 120_000,
-          signal,
-          env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
-        },
-      );
-      const [shaResult, filesResult] = await Promise.all([
-        runCommand("git", ["-C", checkout, "rev-parse", "HEAD"], { timeoutMs: 10_000, signal }),
-        runCommand("git", ["-C", checkout, "ls-files", "-z"], { timeoutMs: 20_000, signal }),
-      ]);
-      const commitSha = shaResult.stdout.toString("utf8").trim();
-      const files = filesResult.stdout
-        .toString("utf8")
-        .split("\0")
-        .filter((file) => file && safePath(file));
-      await progress(
-        "repo.clone.completed",
-        `Cloned ${payload.repository} at ${commitSha.slice(0, 12)}`,
-      );
-
-      const manifests: Record<string, string> = {};
-      for (const file of files) {
-        if (!manifestNames.has(path.basename(file).toLowerCase())) continue;
-        const content = await readSafeFile(checkout, file, 256 * 1024);
-        if (content) manifests[file.toLowerCase()] = content;
-      }
-      const readmePath = files.find((file) => /^readme(?:\.[^/]+)?$/i.test(file));
-      const readme = readmePath
-        ? (await readSafeFile(checkout, readmePath, 256 * 1024))
-            ?.split(/\r?\n/)
-            .slice(0, 300)
-            .join("\n")
-        : undefined;
-      const sourceCandidates = files
-        .filter((file) => sourceExtensions.has(path.extname(file).toLowerCase()))
-        .sort((left, right) => sourceScore(right) - sourceScore(left) || left.localeCompare(right));
-      const selectedFiles: Array<{ path: string; content: string }> = [];
-      let remainingCharacters = options.repoTokenBudget * 4;
-      for (const file of sourceCandidates) {
-        if (selectedFiles.length >= 8 || remainingCharacters <= 0) break;
-        const content = await readSafeFile(checkout, file, 40 * 1024);
-        if (!content || Buffer.byteLength(content) < 1024) continue;
-        const included = content.slice(0, remainingCharacters);
-        selectedFiles.push({ path: file, content: included });
-        remainingCharacters -= included.length;
-      }
-      const detectorFiles = {
-        ...manifests,
-        ...Object.fromEntries(selectedFiles.map((file) => [file.path, file.content])),
-      };
-      const technologyMatches = detectTechnologies({
-        files: detectorFiles,
-        languages: Object.keys(languages),
-      });
-      const hasTests = files.some((file) => /(^|\/)(__tests__|tests?|spec)(\/|\.)/i.test(file));
-      const hasCi = files.some((file) => file.startsWith(".github/workflows/"));
-      const containerized = files.some((file) =>
-        /(^|\/)(dockerfile|docker-compose\.ya?ml)$/i.test(file),
-      );
-      await progress(
-        "repo.extract.completed",
-        `${payload.repository}: ${technologyMatches.length} technology hints, tests ${hasTests ? "found" : "not found"}, CI ${hasCi ? "found" : "not found"}`,
-      );
-
-      return {
-        repository: payload.repository,
-        included: true,
-        commitSha,
-        pushedAt: payload.pushedAt,
-        authorship,
-        languages,
-        hasTests,
-        hasCi,
-        containerized,
-        technologyMatches,
-        tree: twoLevelTree(files),
-        ...(readme ? { readme, readmePath } : {}),
-        selectedFiles,
-      };
-    } finally {
-      await rm(temporaryRoot, { recursive: true, force: true });
-    }
+    return fetchRepository({
+      repository: payload.repository,
+      login: person.github,
+      token,
+      pushedAt: payload.pushedAt,
+      fork: payload.fork,
+      repoTokenBudget: options.repoTokenBudget,
+      signal,
+      ...(options.fetchImplementation ? { fetchImplementation: options.fetchImplementation } : {}),
+      progress,
+    });
   };
 }

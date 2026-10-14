@@ -9,12 +9,16 @@
   },
   "scripts": {
     "build": "pnpm -r --if-present build",
+    "calibrate": "pnpm --filter @talentradar/shared build && pnpm --filter @talentradar/api run calibrate",
     "check": "pnpm check:biome && pnpm check:types && pnpm test && pnpm build",
     "check:biome": "biome check .",
     "check:types": "pnpm --filter @talentradar/shared build && pnpm -r --if-present check:types",
+    "detect-report": "pnpm --filter @talentradar/shared build && pnpm --filter @talentradar/api run detect-report",
     "dev": "pnpm --parallel --filter './apps/*' dev",
     "fix": "biome check --write .",
-    "test": "pnpm -r --if-present test"
+    "profile": "pnpm --filter @talentradar/shared build && pnpm --filter @talentradar/api run profile",
+    "test": "pnpm -r --if-present test",
+    "validate:e2e": "pnpm --filter @talentradar/shared build && pnpm --filter @talentradar/api run validate:e2e"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

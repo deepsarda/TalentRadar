@@ -17,6 +17,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": "http://localhost:3000",
+      // OAuth start and callback live on the API; with APP_ORIGIN=http://localhost:5173 GitHub
+      // redirects back through this proxy, so the session cookie lands on the page's origin.
+      "/auth": "http://localhost:3000",
       "/health": "http://localhost:3000",
     },
   },

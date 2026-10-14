@@ -9,7 +9,6 @@ services:
     dockerContext: .
     healthCheckPath: /health
     autoDeployTrigger: checksPass
-    maxShutdownDelaySeconds: 60
     envVars:
       - key: NODE_ENV
         value: production
@@ -31,3 +30,7 @@ services:
         value: synthetic_only
       - key: REPO_TOKEN_BUDGET
         value: "12000"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false

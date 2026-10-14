@@ -1,11 +1,16 @@
 import path from "node:path";
+import { GridFSBucket } from "mongodb";
 import { createApp } from "./app.js";
 import { createGithubAuthentication } from "./auth/github.js";
 import { readEnvironment } from "./config/environment.js";
+import { createCorrectionsApi } from "./corrections/corrections-api.js";
 import { connectDatabase } from "./database/mongo.js";
 import { createOrganizerEventsApi } from "./events/organizer-events.js";
 import { createMongoPublicEventRepository } from "./events/public-events.js";
 import { startWorker } from "./jobs/worker.js";
+import { createEmailNotifier } from "./notifications/email.js";
+import { createDataApi, sweepExpiredCvs } from "./participants/data-api.js";
+import { createDecisionApi, startDecisionSweep } from "./participants/decision-api.js";
 import { createParticipantApi } from "./participants/participant-api.js";
 import { createAggregateProfileHandler } from "./profile-pipeline/aggregate.js";
 import { createRenderCvHandler } from "./profile-pipeline/cv.js";
@@ -36,14 +41,26 @@ async function main(): Promise<void> {
     database && authentication
       ? createParticipantApi(database.db, authentication, environment)
       : undefined;
+  const dataApi =
+    database && authentication
+      ? createDataApi(database.db, authentication, environment)
+      : undefined;
   const teamApi =
     database && authentication ? createTeamApi(database.db, authentication) : undefined;
+  const notify = createEmailNotifier(environment);
+  const appOrigin = environment.APP_ORIGIN ?? environment.RENDER_EXTERNAL_URL;
+  const decisionApi =
+    database && authentication
+      ? createDecisionApi(database.db, authentication, notify, appOrigin)
+      : undefined;
   const shortlistApi =
     database && authentication ? createShortlistApi(database.db, authentication) : undefined;
   const quickApi =
     database && authentication
       ? createQuickApi(database.db, authentication, environment)
       : undefined;
+  const correctionsApi =
+    database && authentication ? createCorrectionsApi(database.db, authentication) : undefined;
   const orchestrator = database ? createProfileOrchestrator(database.db) : undefined;
   const worker =
     database && environment.RUN_WORKER_IN_API && environment.SESSION_SECRET
@@ -74,11 +91,18 @@ async function main(): Promise<void> {
     staticDirectory,
     ...(authentication ? { authentication } : {}),
     ...(publicEvents ? { publicEvents } : {}),
-    ...(organizerEvents || participantApi || teamApi || shortlistApi || quickApi
+    ...(organizerEvents || participantApi || teamApi || shortlistApi || quickApi || correctionsApi
       ? {
-          apiModules: [organizerEvents, participantApi, teamApi, shortlistApi, quickApi].filter(
-            (module) => module !== undefined,
-          ),
+          apiModules: [
+            organizerEvents,
+            participantApi,
+            dataApi,
+            teamApi,
+            decisionApi,
+            shortlistApi,
+            quickApi,
+            correctionsApi,
+          ].filter((module) => module !== undefined),
         }
       : {}),
     readiness: async () => {
@@ -95,6 +119,23 @@ async function main(): Promise<void> {
     console.log(`TalentRadar listening on port ${environment.PORT}`);
   });
 
+  // Daily CV retention sweep (GridFS files + chunks). Ceiling: every API instance runs it; the
+  // sweep is idempotent so overlap is harmless. Upgrade path: a scheduled job in the queue.
+  const sweepCvs = () => {
+    if (!database) return;
+    sweepExpiredCvs(database.db, new GridFSBucket(database.db, { bucketName: "cv" }))
+      .then(({ deleted }) => {
+        if (deleted > 0) console.log(`CV retention sweep deleted ${deleted} files`);
+      })
+      .catch((error) =>
+        console.error("CV retention sweep failed", error instanceof Error ? error.message : error),
+      );
+  };
+  sweepCvs();
+  const cvSweepTimer = setInterval(sweepCvs, 24 * 60 * 60 * 1000);
+  cvSweepTimer.unref();
+  const decisionSweep = database ? startDecisionSweep(database.db, notify, appOrigin) : undefined;
+
   let shuttingDown = false;
   async function shutdown(signal: NodeJS.Signals): Promise<void> {
     if (shuttingDown) return;
@@ -103,6 +144,8 @@ async function main(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
     });
+    clearInterval(cvSweepTimer);
+    decisionSweep?.stop();
     await worker?.stop();
     await database?.client.close();
   }

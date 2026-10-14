@@ -75,6 +75,17 @@ export async function destroySession(
   response.setHeader("set-cookie", serializeCookie("", 0, secure));
 }
 
+/** Signs the account out everywhere: every session row goes, and this browser's cookie is cleared. */
+export async function destroyAllSessions(
+  db: Db,
+  userId: ObjectId,
+  response: Response,
+  secure: boolean,
+): Promise<void> {
+  await db.collection<SessionDocument>(collections.sessions).deleteMany({ userId });
+  response.setHeader("set-cookie", serializeCookie("", 0, secure));
+}
+
 export async function readCurrentUser(db: Db, request: Request): Promise<CurrentUser | null> {
   const rawToken = cookieValue(request, SESSION_COOKIE);
   if (!rawToken) return null;
