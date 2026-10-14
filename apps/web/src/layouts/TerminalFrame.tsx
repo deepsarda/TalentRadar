@@ -4,6 +4,7 @@ import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { StatusProvider, useStatusLine } from "../components/statusline";
 import { LoadingState } from "../components/ui";
 import { getCurrentUser, logout } from "../lib/api";
+import { shortcutBlocked } from "../lib/keys";
 
 type Portal = "public" | "participant" | "organizer";
 
@@ -75,13 +76,6 @@ const destinations: NavItem[] = [
   { label: "privacy", to: "/privacy" },
   { label: "terms", to: "/terms" },
 ];
-
-function isTyping(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
-  );
-}
 
 /** Matches when every query character appears in order, so "ostl" finds "organizer: shortlist". */
 export function fuzzyMatch(query: string, text: string) {
@@ -314,7 +308,13 @@ function Shell() {
         setOverlay(null);
         return;
       }
-      if (overlay || isTyping(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+      if (
+        overlay ||
+        shortcutBlocked(event.target) ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      ) {
         return;
       }
       if (event.key === ":") {

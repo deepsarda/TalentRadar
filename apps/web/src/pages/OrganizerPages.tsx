@@ -9,6 +9,7 @@ import { TimelineFields } from "../components/TimelineFields";
 import {
   ActionButton,
   ActionLink,
+  Avatar,
   CheckRow,
   countdown,
   Details,
@@ -2034,29 +2035,26 @@ export function EventSectionPage({
   const teams = operations.data?.teams ?? [];
   const lookingForTeam = participants.filter((participant) => participant.lookingForTeam);
   const editable = section === "requirements" || section === "settings";
+  // Shown at the top and again at the bottom, so long forms can be saved from either end.
+  const saveButton = (
+    <ActionButton
+      tone="primary"
+      disabled={!configuration || saveConfiguration.isPending}
+      onClick={() =>
+        saveConfiguration.mutate(undefined, {
+          onSuccess: () =>
+            post(section === "requirements" ? "Requirements saved." : "Settings saved."),
+        })
+      }
+    >
+      {saveConfiguration.isPending ? "Saving…" : "Save changes"}
+    </ActionButton>
+  );
 
   return (
     <div className={`mx-auto grid gap-10 ${editable ? "max-w-2xl" : "max-w-5xl"}`}>
       <div className="grid gap-3">
-        <ScreenHead
-          title={sectionTitle[section]}
-          actions={
-            editable ? (
-              <ActionButton
-                tone="primary"
-                disabled={!configuration || saveConfiguration.isPending}
-                onClick={() =>
-                  saveConfiguration.mutate(undefined, {
-                    onSuccess: () =>
-                      post(section === "requirements" ? "Requirements saved." : "Settings saved."),
-                  })
-                }
-              >
-                {saveConfiguration.isPending ? "Saving…" : "Save changes"}
-              </ActionButton>
-            ) : undefined
-          }
-        />
+        <ScreenHead title={sectionTitle[section]} actions={editable ? saveButton : undefined} />
         {saveConfiguration.isError ? (
           <ErrorState message={saveConfiguration.error.message} />
         ) : null}
@@ -2118,13 +2116,16 @@ export function EventSectionPage({
                   {participants.map((participant) => (
                     <tr key={participant.registrationId}>
                       <th scope="row" data-label="participant" className="font-bold">
-                        <span>
-                          {participant.name}
-                          <span className="dim block font-normal">
-                            @{participant.github}
-                            {participant.verified ? null : (
-                              <span className="text-warn"> unverified</span>
-                            )}
+                        <span className="flex items-center gap-x-3">
+                          <Avatar login={participant.github} size={32} />
+                          <span>
+                            {participant.name}
+                            <span className="dim block font-normal">
+                              @{participant.github}
+                              {participant.verified ? null : (
+                                <span className="text-warn"> unverified</span>
+                              )}
+                            </span>
                           </span>
                         </span>
                       </th>
@@ -2389,6 +2390,14 @@ export function EventSectionPage({
             </div>
           </FormSection>
         </>
+      ) : null}
+      {editable && configuration ? (
+        <div className="grid justify-items-end gap-3">
+          {saveConfiguration.isError ? (
+            <ErrorState message={saveConfiguration.error.message} />
+          ) : null}
+          {saveButton}
+        </div>
       ) : null}
     </div>
   );

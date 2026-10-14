@@ -1,6 +1,7 @@
 import type {
   AnchorHTMLAttributes,
   ButtonHTMLAttributes,
+  ComponentProps,
   CSSProperties,
   InputHTMLAttributes,
   PropsWithChildren,
@@ -46,6 +47,27 @@ export function Pane({
   );
 }
 
+/**
+ * A GitHub avatar, fetched at half its display size and drawn with hard pixels to sit with the
+ * terminal type. Hidden (not a broken-image icon) if the login has no avatar.
+ */
+export function Avatar({ login, size = 32 }: { login: string; size?: number }) {
+  return (
+    <img
+      className="tui-avatar"
+      src={`https://github.com/${encodeURIComponent(login)}.png?size=${Math.ceil(size / 2)}`}
+      alt=""
+      width={size}
+      height={size}
+      loading="lazy"
+      referrerPolicy="no-referrer"
+      onError={(event) => {
+        event.currentTarget.style.visibility = "hidden";
+      }}
+    />
+  );
+}
+
 export function ScreenHead({
   title,
   children,
@@ -67,7 +89,7 @@ export function ActionButton({
   size,
   className = "",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: Tone; size?: "sm" }) {
+}: ComponentProps<"button"> & { tone?: Tone; size?: "sm" }) {
   return (
     <button
       className={`btn tui-btn ${className}`}

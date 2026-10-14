@@ -808,6 +808,7 @@ export async function getParticipantTeamFit(teamId: string): Promise<TeamFitRow[
 export interface TeammateSuggestion {
   id: string;
   name: string;
+  github?: string;
   college?: string;
   topSkills: Array<{ id: string; level: number }>;
   fills: string[];

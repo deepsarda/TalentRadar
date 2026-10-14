@@ -26,6 +26,7 @@ import {
   ActionAnchor,
   ActionButton,
   ActionLink,
+  Avatar,
   Bar,
   Details,
   EmptyState,
@@ -58,6 +59,7 @@ import {
   saveOrganizerShortlistRun,
 } from "../lib/api";
 import { evidenceUrl } from "../lib/evidence";
+import { shortcutBlocked } from "../lib/keys";
 import { skillLabel } from "../lib/skills";
 
 /**
@@ -104,13 +106,6 @@ const sliderGrid =
 
 function sentence(text: string) {
   return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
-function isTyping(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
-  );
 }
 
 /** A titled group inside "more settings". */
@@ -338,7 +333,7 @@ export function ShortlistWorkspacePage() {
       if (ids.length === 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
         return;
       }
-      if (isTyping(event.target) || document.querySelector("[aria-modal='true']")) return;
+      if (shortcutBlocked(event.target)) return;
       const step = { j: 1, ArrowDown: 1, k: -1, ArrowUp: -1 }[event.key];
       if (step) {
         event.preventDefault();
@@ -892,9 +887,10 @@ function FailedProfiles({ eventId }: { eventId: string }) {
           {failures.data?.map((failure) => (
             <li className="flex items-baseline justify-between gap-4" key={failure.profileId}>
               <span className="grid min-w-0">
-                <span>
+                <span className="flex items-center gap-x-[1ch]">
+                  {failure.github ? <Avatar login={failure.github} size={20} /> : null}
                   {failure.name}
-                  {failure.github ? <span className="dim text-xs"> @{failure.github}</span> : null}
+                  {failure.github ? <span className="dim text-xs">@{failure.github}</span> : null}
                 </span>
                 <span className="dim truncate text-xs" title={failure.error}>
                   {failure.error}
@@ -1043,7 +1039,8 @@ function Inspector({
               const flags = [...new Set([...member.flags, ...(profile?.flags ?? [])])];
               return (
                 <li className="grid content-start" key={member.personId}>
-                  <span className="flex flex-wrap items-baseline gap-x-[1ch]">
+                  <span className="flex flex-wrap items-center gap-x-[1ch]">
+                    <Avatar login={member.github} size={24} />
                     {member.name}
                     <span className="dim text-xs">@{member.github}</span>
                     {member.profileStatus === "ready" ? null : (

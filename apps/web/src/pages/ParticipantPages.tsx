@@ -7,6 +7,7 @@ import {
   ActionAnchor,
   ActionButton,
   ActionLink,
+  Avatar,
   Bar,
   CheckRow,
   countdown,
@@ -63,6 +64,7 @@ import {
   uploadParticipantCv,
 } from "../lib/api";
 import { evidenceUrl } from "../lib/evidence";
+import { shortcutBlocked } from "../lib/keys";
 import { skillLabel, splitSkills } from "../lib/skills";
 
 // CV first, so the details step can prefill what the CV states (spec: participant flow step 3).
@@ -192,8 +194,12 @@ export function ParticipantDashboard() {
       {overview.data ? (
         <section className="grid gap-2">
           <SectionLabel>profile</SectionLabel>
-          {profile?.summary ? (
-            <p className="max-w-[72ch] text-lg leading-snug">{profile.summary}</p>
+          {profile ? (
+            <PersonHeader
+              name={overview.data.account.name ?? account.data?.name ?? ""}
+              login={account.data?.login}
+              summary={profile.summary}
+            />
           ) : null}
           {profile && profile.skills.length > 0 ? (
             <div className="grid gap-6 py-2 sm:grid-cols-2">
@@ -227,6 +233,210 @@ export function ParticipantDashboard() {
         </section>
       ) : null}
     </div>
+  );
+}
+
+type ApplicationDetails = { name: string; college: string; year: string; branch: string };
+
+/** "Apply to event" on a built profile: opens a dialog of open events to apply to with it. */
+function ApplyToEvent({ repositories }: { repositories: string[] }) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <ActionButton ref={triggerRef} tone="primary" onClick={() => setOpen(true)}>
+        Apply to event
+      </ActionButton>
+      {open ? (
+        <ApplyDialog
+          repositories={repositories}
+          onClose={() => {
+            setOpen(false);
+            triggerRef.current?.focus();
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * Open events the person hasn't applied to. With saved details, a CV and repositories on file,
+ * applying is one step: the same repositories (so the profile is reused, not rebuilt), the CV and
+ * the saved details, with consent asked per event. Otherwise it continues to the full form.
+ */
+function ApplyDialog({ repositories, onClose }: { repositories: string[]; onClose: () => void }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [consented, setConsented] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const overview = useQuery({
+    queryKey: ["participant-overview"],
+    queryFn: getParticipantOverview,
+    retry: false,
+  });
+  const events = useQuery({ queryKey: ["public-events"], queryFn: getPublicEvents });
+  const apply = useMutation({
+    mutationFn: ({ slug, details }: { slug: string; details: ApplicationDetails }) =>
+      submitParticipantApplication(slug, { details, repositories, consent: true }),
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["participant-overview"] });
+      navigate(`/participant/applications/${result.application.id}`);
+    },
+  });
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const account = overview.data?.account;
+  const applied = new Set(overview.data?.applications.map((application) => application.eventId));
+  const open = (events.data ?? []).filter(
+    (event) => event.status === "open" && !applied.has(event.id),
+  );
+  const loading = overview.isPending || events.isPending;
+  useEffect(() => {
+    if (!loading) listRef.current?.querySelector("button")?.focus();
+  }, [loading]);
+
+  const details: ApplicationDetails | null =
+    account?.name && account.college && account.year && account.branch
+      ? { name: account.name, college: account.college, year: account.year, branch: account.branch }
+      : null;
+  const quick = details !== null && Boolean(account?.hasCv) && repositories.length > 0;
+  const event = open.find((candidate) => candidate.slug === chosen);
+
+  return (
+    <div
+      className="modal modal-open tui-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="apply-title"
+    >
+      <div className="modal-box">
+        <div className="pane m-4">
+          <header className="pane-title">
+            <h2 id="apply-title">apply with this profile</h2>
+            {open.length > 0 ? <span className="pane-meta">{open.length} open</span> : null}
+          </header>
+          <div className="pane-body flush grid gap-4 pb-4">
+            {loading ? <LoadingState label="loading events" /> : null}
+            {!loading && open.length === 0 ? (
+              <p className="dim px-4">No open events to apply to right now.</p>
+            ) : null}
+            {open.length > 0 ? (
+              <div ref={listRef} className="tui-list" role="listbox" aria-label="Open events">
+                {open.map((candidate) => (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={candidate.slug === chosen}
+                    key={candidate.id}
+                    onClick={() => {
+                      setChosen(candidate.slug);
+                      apply.reset();
+                    }}
+                  >
+                    <span className="marker" aria-hidden="true">
+                      {candidate.slug === chosen ? "▸" : ""}
+                    </span>
+                    <span className="grid min-w-0">
+                      <span className="truncate">{candidate.name}</span>
+                      <span className="dim text-sm">
+                        {candidate.mode.replace("_", " ")} · closes{" "}
+                        {formatDate(candidate.registrationClosesAt)}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {event ? (
+              <div className="grid gap-3 px-4">
+                {quick ? (
+                  <>
+                    <p className="dim">
+                      Uses {repositories.length} repo{repositories.length === 1 ? "" : "s"}, your CV
+                      and saved details.{" "}
+                      <Link to={`/participant/apply/${event.slug}`}>Change first</Link>
+                    </p>
+                    <CheckRow checked={consented} onChange={setConsented} required>
+                      I agree to automated evaluation
+                    </CheckRow>
+                  </>
+                ) : (
+                  <p className="dim">Add your details, CV and repos on the next screen.</p>
+                )}
+                {apply.isError ? (
+                  <Notice tone="error" tag="error">
+                    {apply.error.message}
+                  </Notice>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-4 pb-4">
+          <ActionButton tone="quiet" onClick={onClose}>
+            Cancel
+          </ActionButton>
+          {event && !quick ? (
+            <ActionLink to={`/participant/apply/${event.slug}`} tone="primary">
+              Continue
+            </ActionLink>
+          ) : (
+            <ActionButton
+              tone="primary"
+              disabled={!event || !details || !consented || apply.isPending}
+              onClick={() => event && details && apply.mutate({ slug: event.slug, details })}
+            >
+              {apply.isPending ? "Applying…" : event ? `Apply to ${event.name}` : "Apply"}
+            </ActionButton>
+          )}
+        </div>
+      </div>
+      <button type="button" className="modal-backdrop" aria-label="Close" onClick={onClose} />
+    </div>
+  );
+}
+
+/** Who this is: avatar, name, GitHub handle and the model's one-paragraph summary. */
+function PersonHeader({
+  name,
+  login,
+  summary,
+}: {
+  name: string;
+  login: string | undefined;
+  summary: string | undefined;
+}) {
+  return (
+    <section className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-5 gap-y-3">
+      {login ? <Avatar login={login} size={72} /> : <span />}
+      <div className="grid min-w-0 gap-1">
+        <p className="font-display text-3xl leading-none">{name}</p>
+        {login ? (
+          <a
+            className="dim w-fit"
+            href={`https://github.com/${encodeURIComponent(login)}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            @{login} ↗
+          </a>
+        ) : null}
+      </div>
+      {summary ? (
+        <p className="col-span-2 max-w-[72ch] text-lg leading-snug sm:col-span-1 sm:col-start-2">
+          {summary}
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -650,13 +860,6 @@ export function ParticipantOnboarding() {
   );
 }
 
-function isTyping(target: EventTarget | null) {
-  return (
-    target instanceof HTMLElement &&
-    (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
-  );
-}
-
 const logTime = new Intl.DateTimeFormat("en-IN", {
   hour: "2-digit",
   minute: "2-digit",
@@ -723,7 +926,7 @@ export function ParticipantProfilePage() {
   // j/k and arrow keys walk the skills list, like lazygit, unless focus is in a field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (isTyping(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (shortcutBlocked(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === "/" && filterRef.current) {
         event.preventDefault();
         filterRef.current.focus();
@@ -788,6 +991,13 @@ export function ParticipantProfilePage() {
                 event.target.value = "";
               }}
             />
+            {data.status === "ready" ? (
+              <ApplyToEvent
+                repositories={data.repos
+                  .filter((repo) => repo.included)
+                  .map((repo) => repo.fullName)}
+              />
+            ) : null}
             {data.status === "failed" ? (
               <ActionButton
                 tone="primary"
@@ -807,7 +1017,7 @@ export function ParticipantProfilePage() {
           </div>
         }
       />
-      {data.summary ? <p className="max-w-[72ch] text-lg leading-snug">{data.summary}</p> : null}
+      <PersonHeader name={data.displayName} login={login} summary={data.summary} />
       {replaceCv.isError || rebuild.isError ? (
         <Notice tone="error" tag="error">
           {(replaceCv.error ?? rebuild.error)?.message}
@@ -1153,7 +1363,8 @@ function TeamSection({ eventId }: { eventId: string }) {
                 className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 px-6 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto_6ch]"
                 key={member.id}
               >
-                <span className="flex min-w-0 flex-wrap items-baseline gap-x-3">
+                <span className="flex min-w-0 flex-wrap items-center gap-x-3">
+                  <Avatar login={member.github} size={24} />
                   <span className="font-bold">{member.name}</span>
                   <span className="dim">@{member.github}</span>
                   {member.id === team.captainId ? <span className="text-info">captain</span> : null}
@@ -1354,7 +1565,8 @@ function TeammateSuggestions({ eventId }: { eventId: string }) {
       <ul className="grid gap-4">
         {suggestions.data.map((person) => (
           <li className="grid gap-1" key={person.id}>
-            <p className="flex flex-wrap items-baseline gap-x-3">
+            <p className="flex flex-wrap items-center gap-x-3">
+              {person.github ? <Avatar login={person.github} size={24} /> : null}
               <span className="font-bold">{person.name}</span>
               {person.college ? <span className="dim">{person.college}</span> : null}
               <span className="text-accent">

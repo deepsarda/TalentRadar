@@ -158,10 +158,14 @@ export async function promoteFromWaitlist(
       await db
         .collection<HackathonDocument>(collections.hackathons)
         .updateOne({ _id: hackathonId }, { $set: { updatedAt: now } }, { session });
-      const [seated, waiting] = await Promise.all([
-        registrations.countDocuments({ hackathonId, status: { $in: SEATED } }, { session }),
-        registrations.find({ hackathonId, status: "waitlisted" }, { session }).toArray(),
-      ]);
+      // Sequential: operations in one transaction can't run in parallel on its session.
+      const seated = await registrations.countDocuments(
+        { hackathonId, status: { $in: SEATED } },
+        { session },
+      );
+      const waiting = await registrations
+        .find({ hackathonId, status: "waitlisted" }, { session })
+        .toArray();
       const waitingByTeam = new Map<string, number>();
       for (const registration of waiting) {
         const teamId = registration.teamId?.toHexString();

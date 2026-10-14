@@ -389,6 +389,9 @@ export function createTeamApi(db: Db, authentication: Authentication): ApiModule
         const collegeById = new Map(
           candidatePeople.map((candidate) => [candidate._id.toHexString(), candidate.college]),
         );
+        const githubById = new Map(
+          candidatePeople.map((candidate) => [candidate._id.toHexString(), candidate.github]),
+        );
         const ranked = rankTeammates(
           event.requirements,
           event.ranking.confidenceFactors,
@@ -402,6 +405,7 @@ export function createTeamApi(db: Db, authentication: Authentication): ApiModule
             return {
               id: suggestion.id,
               name: candidate?.name ?? "Participant",
+              github: githubById.get(suggestion.id),
               ...(college ? { college } : {}),
               topSkills: [...(candidate?.skills ?? [])]
                 .sort((left, right) => right.effective - left.effective)
@@ -428,15 +432,15 @@ export function createTeamApi(db: Db, authentication: Authentication): ApiModule
         let createdTeam: TeamDocument | null = null;
         try {
           await session.withTransaction(async () => {
-            const [event, registration] = await Promise.all([
-              openEvent(db, eventId, session),
-              db
-                .collection<RegistrationDocument>(collections.registrations)
-                .findOne(
-                  { hackathonId: eventId, personId: person._id, teamId: { $exists: false } },
-                  { session },
-                ),
-            ]);
+            // Sequential on purpose: a transaction's operations can't run in parallel on one
+            // session (Atlas rejects the second "start transaction" with a 500).
+            const event = await openEvent(db, eventId, session);
+            const registration = await db
+              .collection<RegistrationDocument>(collections.registrations)
+              .findOne(
+                { hackathonId: eventId, personId: person._id, teamId: { $exists: false } },
+                { session },
+              );
             if (!event || !registration)
               throw new TeamConflictError("Event is closed or you already joined a team");
             const now = new Date();

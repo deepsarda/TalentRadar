@@ -844,6 +844,16 @@
   /* -------------------------------------------------------------- status */
   /* `[✓ SELECTED]` — symbol, colour and word, never colour alone. */
 
+  /* GitHub avatar: square, framed, upscaled with hard pixels like the rest of the screen. */
+  .tui-avatar {
+    flex: none;
+    display: block;
+    background-color: var(--raised);
+    border: 1px solid var(--frame);
+    image-rendering: pixelated;
+    object-fit: cover;
+  }
+
   .tui-status {
     display: inline-flex;
     gap: 0.5ch;
