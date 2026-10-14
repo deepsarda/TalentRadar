@@ -18,16 +18,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
+      # No version here: pnpm/action-setup reads "packageManager" from package.json, the single
+      # source of truth (the Dockerfile installs the same version).
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10.32.1
           run_install: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 22.19.0
+          # Matches package.json engines (>=24) and the node:24 Docker image.
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
