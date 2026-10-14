@@ -1,11 +1,14 @@
 export {
   aggregateProfile,
   CvClaimSchema,
+  type DetectedTool,
   type ProfileJudgment,
   ProfileJudgmentSchema,
   type RepositoryJudgment,
   RepositoryJudgmentSchema,
   RepositorySkillJudgmentSchema,
+  UNANALYSED_NOTE,
+  withDetectedTools,
 } from "./profiles/aggregate.js";
 export type { RankedTeam, RequirementBreakdown } from "./ranking/rank.js";
 export { rank } from "./ranking/rank.js";

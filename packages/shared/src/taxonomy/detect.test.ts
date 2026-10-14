@@ -39,3 +39,21 @@ describe("taxonomy", () => {
     expect(ids).toContain("dotnet");
   });
 });
+
+describe("detection false positives", () => {
+  const ids = (files: Record<string, string>, languages: string[] = []) =>
+    detectTechnologies({ files, languages }).map((match) => match.id);
+
+  it("doesn't report git for .github or .gitignore (path rules match whole segments)", () => {
+    const found = ids({ ".github/workflows/ci.yml": "", ".gitignore": "" });
+    expect(found).not.toContain("git");
+    expect(found).toContain("github_actions");
+  });
+
+  it("only reports nodejs when a package.json exists, not for the word node in code", () => {
+    expect(ids({ "src/list.c": "struct node { struct node *next; };" }, ["C"])).not.toContain(
+      "nodejs",
+    );
+    expect(ids({ "package.json": "{}" })).toContain("nodejs");
+  });
+});

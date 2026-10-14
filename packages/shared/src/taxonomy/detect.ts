@@ -94,6 +94,15 @@ function jsonSectionNames(
   );
 }
 
+/**
+ * Whether `path` contains `segments` as whole path segments, so ".git" matches ".git/config" but
+ * not ".github/workflows/ci.yml" or ".gitignore".
+ */
+function pathHasSegments(path: string, segments: string): boolean {
+  const needle = segments.replace(/^\/+|\/+$/g, "");
+  return `/${path}/`.includes(`/${needle}/`);
+}
+
 export function detectTechnologies(
   input: RepositoryDetectionInput,
   selectedTaxonomy: Taxonomy = taxonomy,
@@ -141,7 +150,7 @@ export function detectTechnologies(
           reasons.push(`file:${value}`);
         } else if (
           detector === "paths" &&
-          paths.some((path) => path.includes(value.toLowerCase().replaceAll("*", "")))
+          paths.some((path) => pathHasSegments(path, value.toLowerCase().replaceAll("*", "")))
         ) {
           reasons.push(`path:${value}`);
         } else if (

@@ -62,6 +62,7 @@ import {
   submitParticipantTeam,
   uploadParticipantCv,
 } from "../lib/api";
+import { evidenceUrl } from "../lib/evidence";
 import { skillLabel, splitSkills } from "../lib/skills";
 
 // CV first, so the details step can prefill what the CV states (spec: participant flow step 3).
@@ -857,7 +858,7 @@ export function ParticipantProfilePage() {
                       <li className="grid gap-1" key={`${evidence.repository}-${evidence.path}`}>
                         <a
                           className="tui-link break-all text-fg!"
-                          href={`https://github.com/${evidence.repository}/blob/${evidence.commitSha}/${evidence.path}`}
+                          href={evidenceUrl(evidence)}
                           rel="noreferrer"
                           target="_blank"
                         >

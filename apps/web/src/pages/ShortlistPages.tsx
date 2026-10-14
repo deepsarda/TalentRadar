@@ -57,6 +57,7 @@ import {
   type ShortlistRunPerson,
   saveOrganizerShortlistRun,
 } from "../lib/api";
+import { evidenceUrl } from "../lib/evidence";
 import { skillLabel } from "../lib/skills";
 
 /**
@@ -1076,7 +1077,7 @@ function Inspector({
             <div className="tui-list -mx-4 md:grid-cols-2">
               {evidence.map(({ profile, skill, item }) => (
                 <a
-                  href={`https://github.com/${item.repository}/blob/${item.commitSha}/${item.path}`}
+                  href={evidenceUrl(item)}
                   key={`${profile.personId}-${skill.id}-${item.repository}-${item.path}`}
                   rel="noreferrer"
                   target="_blank"

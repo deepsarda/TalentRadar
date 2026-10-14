@@ -1,11 +1,17 @@
 import { GoogleGenAI } from "@google/genai";
-import { aggregateProfile, type PersonProfile, type ProfileJudgment } from "@talentradar/shared";
+import {
+  aggregateProfile,
+  type PersonProfile,
+  type ProfileJudgment,
+  withDetectedTools,
+} from "@talentradar/shared";
 import { z } from "zod";
 import { githubFetch } from "../jobs/rate-limit.js";
 import { selectRecentRepositories } from "../quick/import-row.js";
 import { inspectCvPdf, renderPdfPages } from "./cv.js";
 import {
   type CvFacts,
+  detectedTools,
   FetchResultSchema,
   judgeProfile,
   noCv,
@@ -136,7 +142,10 @@ export async function judgeAndAggregate(options: {
   });
   return {
     judgment: result,
-    profile: aggregateProfile(options.personId, options.displayName, result),
+    profile: withDetectedTools(
+      aggregateProfile(options.personId, options.displayName, result),
+      detectedTools(options.repositories),
+    ),
     rawText,
   };
 }

@@ -75,3 +75,12 @@ describe("fetchRepository contributors", () => {
     expect(result).toMatchObject({ included: false, exclusionReason: "fork_without_authorship" });
   });
 });
+
+describe("fileTree", () => {
+  it("lists files up to four segments deep and collapses deeper ones into their folder", async () => {
+    const { fileTree } = await import("./repository.js");
+    expect(fileTree(["README.md", "a/b/c/d.kt", "a/b/c/d/e.kt", "a/b/c/d/f.kt", "x/y.py"])).toEqual(
+      ["README.md", "a/b/c/d.kt", "a/b/c/d/", "x/y.py"],
+    );
+  });
+});

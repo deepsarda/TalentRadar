@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { GoogleGenAI } from "@google/genai";
-import { promptVersion, taxonomyIds } from "@talentradar/shared";
+import { promptVersion, taxonomy, taxonomyIds } from "@talentradar/shared";
 import { describe, expect, it } from "vitest";
 import { type FewShot, fewShots } from "./few-shot.js";
 import {
@@ -18,8 +18,8 @@ import {
  * Bump promptVersion in packages/shared/src/taxonomy/versions.ts, then record both values here.
  */
 const pinnedPrompt = {
-  version: "v2",
-  fingerprint: "92fe19186ab4984253d3a3d4134d64f13f540b1a0543ea9d6ab80c52de3a06a6",
+  version: "v3",
+  fingerprint: "5f3f756c400c5d1d6c094a80336f3b4e0b04c97c602cd2c025e660195f660fb7",
 };
 
 interface SchemaNode {
@@ -89,16 +89,14 @@ describe.each(fewShots.map((shot) => [shot.teaches, shot] as const))("few-shot: 
     expectKeyOrder(shot.expected, responseSchema() as SchemaNode, "$");
   });
 
-  it("cites only files sent for its own repository, all present in its tree", () => {
-    const sent = new Set([
+  it("cites only real paths of its own repository: sent files, the README or tree entries", () => {
+    const citable = new Set([
       ...shot.input.files.map((file) => file.path),
       ...(shot.input.readmePath ? [shot.input.readmePath] : []),
+      ...shot.input.tree,
     ]);
     expect(cited.length).toBeGreaterThan(0);
-    for (const path of cited) {
-      expect(sent.has(path), path).toBe(true);
-      expect(shot.input.tree, path).toContain(path);
-    }
+    for (const path of cited) expect(citable.has(path), path).toBe(true);
     for (const file of shot.input.files) expect(shot.input.tree).toContain(file.path);
   });
 
@@ -132,7 +130,14 @@ describe("few-shot set", () => {
     expect(tutorial.skills.every((skill) => skill.level <= 2)).toBe(true);
     const solid = repo(1);
     expect(solid.originality).toBe(4);
-    expect(solid.skills.every((skill) => skill.level === 3)).toBe(true);
+    // Skills backed by code the model read are level 3; name-only citations are levelled lower.
+    const read = new Set(fewShots[1]?.input.files.map((file) => file.path));
+    const fromCode = solid.skills.filter((skill) =>
+      skill.evidence.some((item) => read.has(item.path)),
+    );
+    expect(fromCode.length).toBeGreaterThan(0);
+    expect(fromCode.every((skill) => skill.level === 3)).toBe(true);
+    expect(solid.skills.some((skill) => skill.id === "react")).toBe(true);
     const novel = repo(2);
     expect(novel.originality).toBe(5);
     expect(novel.skills.some((skill) => skill.level >= 3)).toBe(true);
@@ -144,9 +149,16 @@ describe("few-shot set", () => {
     expect(injection.skills.every((skill) => skill.level < 5)).toBe(true);
   });
 
-  it("comes from five different domains with no shared skill ids", () => {
-    const ids = fewShots.map((_, index) => repo(index).skills.map((skill) => skill.id));
-    expect(new Set(ids.flat()).size).toBe(ids.flat().length);
+  it("teaches a different area per shot, and reports areas alongside tools", () => {
+    const areaSets = fewShots.map((_, index) =>
+      repo(index)
+        .skills.map((skill) => skill.id)
+        .filter((id) => id in taxonomy.domains),
+    );
+    for (const areas of areaSets) expect(areas.length).toBeGreaterThan(0);
+    // Tools like python may repeat across shots; each shot's main area should not.
+    const firstAreas = areaSets.map((areas) => areas.at(-1));
+    expect(new Set(firstAreas).size).toBe(firstAreas.length);
   });
 
   it("is clearly synthetic", () => {
@@ -196,4 +208,56 @@ describe("pinned Gemini model (live, Day-2 tests)", () => {
     },
     120_000,
   );
+});
+
+describe("evidence from the file tree", () => {
+  const repository = {
+    repository: "riya/nox",
+    included: true as const,
+    commitSha: "0".repeat(40),
+    pushedAt: "2026-09-01T00:00:00Z",
+    authorship: 1,
+    languages: { Kotlin: 100 },
+    hasTests: false,
+    hasCi: false,
+    containerized: false,
+    technologyMatches: [],
+    tree: ["core/src/main/", "core/Vm.kt", "README.md"],
+    selectedFiles: [{ path: "core/Main.kt", content: "fun main() {}" }],
+  };
+  const skill = (path: string) => ({
+    id: "kotlin",
+    evidence: [{ path, note: "only its name was seen" }],
+    thought: "Kotlin source",
+    level: 2,
+  });
+  const judged = (path: string) =>
+    sanitizeResponse(
+      {
+        thoughts: "t",
+        summary: "s",
+        repos: [
+          { repo: "riya/nox", thoughts: "t", originality: 3, skills: [skill(path)], flags: [] },
+        ],
+        cv: { claims: [] },
+        flags: [],
+      },
+      [repository],
+      noCv,
+    ).repos[0]?.skills[0]?.evidence[0]?.path ?? null;
+
+  it("accepts a real tracked file that wasn't sampled", () => {
+    expect(judged("core/Vm.kt")).toBe("core/Vm.kt");
+  });
+
+  it("accepts a real folder, stored with a trailing slash so links open the tree", () => {
+    expect(judged("core/src/main/")).toBe("core/src/main/");
+    expect(judged("core/src/main")).toBe("core/src/main/");
+    expect(judged("core")).toBe("core/");
+  });
+
+  it("still rejects files and folders that don't exist in the repo", () => {
+    expect(judged("core/Invented.kt")).toBeNull();
+    expect(judged("invented/")).toBeNull();
+  });
 });

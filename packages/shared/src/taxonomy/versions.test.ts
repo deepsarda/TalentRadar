@@ -18,8 +18,8 @@ function fingerprint(value: unknown): string {
  */
 const pinned = {
   taxonomy: {
-    version: "v2",
-    fingerprint: "1a09d24b",
+    version: "v3",
+    fingerprint: "396a7f0a",
   },
   rubric: {
     version: "v1",

@@ -1,10 +1,11 @@
-import { aggregateProfile, ProfileJudgmentSchema } from "@talentradar/shared";
+import { aggregateProfile, ProfileJudgmentSchema, withDetectedTools } from "@talentradar/shared";
 import type { Db } from "mongodb";
 import { ObjectId } from "mongodb";
 import { z } from "zod";
 import type { AssessmentDocument, ProfileDocument } from "../database/models.js";
 import { collections } from "../database/mongo.js";
 import type { JobContext } from "../jobs/worker.js";
+import { detectedTools, FetchResultSchema } from "./judge.js";
 
 const AggregatePayloadSchema = z.object({
   profileId: z.string().length(24),
@@ -24,7 +25,12 @@ export function createAggregateProfileHandler(db: Db) {
     ]);
     if (!profile || !assessment) throw new Error("Profile aggregation inputs are missing");
     const judgment = ProfileJudgmentSchema.parse(assessment.result);
-    const aggregated = aggregateProfile(payload.personId, profile.displayName, judgment);
+    // Tools the detectors found but the model didn't judge stay in, marked unanalysed.
+    const facts = z.array(FetchResultSchema).safeParse(assessment.facts);
+    const aggregated = withDetectedTools(
+      aggregateProfile(payload.personId, profile.displayName, judgment),
+      facts.success ? detectedTools(facts.data) : [],
+    );
     const now = new Date();
     await db.collection<ProfileDocument>(collections.profiles).updateOne(
       { _id: profileId, assessmentId: assessment._id },

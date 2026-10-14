@@ -14,11 +14,11 @@ export const taxonomyVersion = taxonomy.version;
 export const rubricVersion = "v1";
 
 /** Bump when the judge prompt (judge.ts instructions or few-shot.ts examples) changes. */
-export const promptVersion = "v2";
+export const promptVersion = "v3";
 
 /**
  * Bump when stage-2 extraction changes what the judge is sent: file sampling in
  * apps/api/src/profile-pipeline/repository.ts, or technology detection in detect.ts.
  * v2: manifests in subfolders (monorepos) are detected.
  */
-export const samplerVersion = "v2";
+export const samplerVersion = "v3";

@@ -1,5 +1,5 @@
 {
-  "version": "v2",
+  "version": "v3",
   "domains": {
     "frontend": {
       "label": "Frontend",
@@ -221,7 +221,7 @@
       "label": "Node.js",
       "aliases": ["node", "node.js"],
       "domains": ["backend"],
-      "detect": { "files": ["package.json"], "runtime": ["node"] }
+      "detect": { "files": ["package.json"] }
     },
     "express": {
       "label": "Express",
@@ -966,7 +966,7 @@
       "label": "Git",
       "aliases": ["version control"],
       "domains": ["devops_cloud"],
-      "detect": { "paths": [".git"] }
+      "detect": {}
     },
 
     "owasp": {

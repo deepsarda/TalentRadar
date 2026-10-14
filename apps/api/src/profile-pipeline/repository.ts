@@ -152,11 +152,24 @@ function sourceScore(filePath: string): number {
   return score;
 }
 
-function twoLevelTree(files: string[]): string[] {
-  return files
-    .map((file) => file.split("/").slice(0, 3).join("/"))
-    .filter((value, index, values) => values.indexOf(value) === index)
-    .slice(0, 500);
+/** How deep the file tree sent to the model goes, and how many entries at most. */
+const TREE_DEPTH = 4;
+const TREE_LIMIT = 400;
+
+/**
+ * Every tracked file up to TREE_DEPTH segments deep; deeper files collapse into their folder at
+ * that depth, written with a trailing "/". The model may cite listed files (not folders).
+ */
+export function fileTree(files: string[]): string[] {
+  const entries = new Set<string>();
+  for (const file of files) {
+    const segments = file.split("/");
+    entries.add(
+      segments.length <= TREE_DEPTH ? file : `${segments.slice(0, TREE_DEPTH).join("/")}/`,
+    );
+    if (entries.size >= TREE_LIMIT) break;
+  }
+  return [...entries];
 }
 
 export interface ExtractedCheckout {
@@ -244,7 +257,7 @@ export async function extractCheckout(
     hasCi: files.some((file) => file.startsWith(".github/workflows/")),
     containerized: files.some((file) => /(^|\/)(dockerfile|docker-compose\.ya?ml)$/i.test(file)),
     technologyMatches,
-    tree: twoLevelTree(files),
+    tree: fileTree(files),
     ...(readme && readmePath ? { readme, readmePath } : {}),
     selectedFiles,
     manifests: Object.keys(manifests),

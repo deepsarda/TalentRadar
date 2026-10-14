@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Confidence, Evidence, PersonProfile, ProfileSkill } from "../schemas.js";
-import { taxonomyIds } from "../taxonomy/taxonomy.js";
+import { taxonomy, taxonomyIds } from "../taxonomy/taxonomy.js";
 
 const TaxonomyIdSchema = z.string().refine((value) => taxonomyIds.includes(value), {
   message: "Unknown taxonomy id",
@@ -155,4 +155,44 @@ export function aggregateProfile(
     novelty,
     flags: judgment.flags,
   };
+}
+
+/** A tool the stage-2 detectors found in one repository (manifest, file, path or language rule). */
+export interface DetectedTool {
+  repository: string;
+  commitSha: string;
+  id: string;
+  reasons: string[];
+}
+
+export const UNANALYSED_NOTE = "No analysis done for this";
+
+/**
+ * Keeps every detected tool the model didn't judge: level 3, low confidence, marked unanalysed.
+ * Concept-only matches (text heuristics like `concepts:aria`) are skipped: they aren't evidence of
+ * a tool. Evidence points at the repository root at the scored commit, since a manifest may live
+ * in a subfolder and a guessed file path could 404.
+ */
+export function withDetectedTools(profile: PersonProfile, detected: DetectedTool[]): PersonProfile {
+  const judged = new Set(profile.skills.map((skill) => skill.id));
+  const byId = new Map<string, DetectedTool[]>();
+  for (const tool of detected) {
+    if (judged.has(tool.id) || !(tool.id in taxonomy.technologies)) continue;
+    if (tool.reasons.every((reason) => reason.startsWith("concepts:"))) continue;
+    byId.set(tool.id, [...(byId.get(tool.id) ?? []), tool]);
+  }
+  const added: ProfileSkill[] = [...byId].map(([id, tools]) => ({
+    id,
+    level: 3,
+    confidence: "low",
+    effective: round(3 * confidenceFactors.low),
+    evidence: tools.map((tool) => ({
+      repository: tool.repository,
+      commitSha: tool.commitSha,
+      path: "/",
+      note: `Detected by ${tool.reasons.join(", ")}. ${UNANALYSED_NOTE}.`,
+    })),
+    thought: `${UNANALYSED_NOTE}: found by the dependency and file detectors, not judged by the model.`,
+  }));
+  return { ...profile, skills: [...profile.skills, ...added] };
 }

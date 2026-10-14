@@ -198,6 +198,22 @@ def save_high_score(value):
               "Mostly course code, but the high-score helpers are written on their own and handle missing or corrupt files sensibly. A small independent step that runs: working, not yet structured.",
             level: 2,
           },
+          {
+            id: "game_dev",
+            evidence: [
+              {
+                path: "README.md",
+                note: "Says it was made while following a video course",
+              },
+              {
+                path: "main.py",
+                note: "Game loop, input and collision copied from the course structure",
+              },
+            ],
+            thought:
+              "A working game, but it is the course's flappy-bird loop with renamed assets; nothing about game design or engine work is its own.",
+            level: 1,
+          },
         ],
         flags: [],
       },
@@ -224,6 +240,7 @@ const solidApp: FewShot = {
         { id: "postgresql", reasons: ["npm:pg"] },
         { id: "docker", reasons: ["file:Dockerfile"] },
         { id: "github_actions", reasons: ["path:.github/workflows/"] },
+        { id: "react", reasons: ["npm:react"] },
       ],
     },
     readmePath: "README.md",
@@ -243,8 +260,9 @@ const solidApp: FewShot = {
       "src/routes/events.ts",
       "src/routes/rsvps.ts",
       "test/rsvps.test.ts",
-      "web/app.js",
-      "web/index.html",
+      "web/package.json",
+      "web/src/App.tsx",
+      "web/src/main.tsx",
     ],
     files: [
       {
@@ -419,6 +437,94 @@ describe("DELETE /rsvps/:id", () => {
             thought:
               "Clean, typed code, but no advanced type features are needed or shown in what was sent.",
             level: 3,
+          },
+          {
+            id: "backend",
+            evidence: [
+              {
+                path: "src/routes/rsvps.ts",
+                note: "REST routes with validation, transactional capacity check and error responses",
+              },
+            ],
+            thought:
+              "A real API: validated input, a transaction guarding capacity, tested routes. Standard Express patterns, so solid junior backend work.",
+            level: 3,
+          },
+          {
+            id: "nodejs",
+            evidence: [
+              {
+                path: "src/routes/rsvps.ts",
+                note: "Async route handlers on a pooled Postgres client",
+              },
+            ],
+            thought:
+              "Ordinary, correct Node service code: async handlers, pooled connections, errors passed to middleware.",
+            level: 3,
+          },
+          {
+            id: "rest_api",
+            evidence: [
+              {
+                path: "src/routes/rsvps.ts",
+                note: "Resource routes with validation and proper status codes",
+              },
+              {
+                path: "README.md",
+                note: "Documents the sign-up and waitlist behaviour the routes implement",
+              },
+            ],
+            thought:
+              "Clean REST design: validated input, meaningful status codes, and the README matches what the code does.",
+            level: 3,
+          },
+          {
+            id: "docker",
+            evidence: [
+              {
+                path: "Dockerfile",
+                note: "Only its name was seen: the API ships as a container",
+              },
+            ],
+            thought:
+              "A Dockerfile exists and the facts say containerized, but its contents were not sent, so level it cautiously.",
+            level: 2,
+          },
+          {
+            id: "github_actions",
+            evidence: [
+              {
+                path: ".github/workflows/ci.yml",
+                note: "Only its name was seen: CI on push",
+              },
+            ],
+            thought:
+              "A CI workflow is present; without its contents, credit that it exists, not what it does.",
+            level: 2,
+          },
+          {
+            id: "react",
+            evidence: [
+              {
+                path: "web/src/App.tsx",
+                note: "Only its name was seen; web/package.json depends on react",
+              },
+            ],
+            thought:
+              "A React client exists but none of its code was sent; credit the tool cautiously.",
+            level: 2,
+          },
+          {
+            id: "frontend",
+            evidence: [
+              {
+                path: "web/src/App.tsx",
+                note: "Only its name was seen: a small React client",
+              },
+            ],
+            thought:
+              "There is a frontend, but this repository's strength is the API; the client was not read.",
+            level: 2,
           },
         ],
         flags: [],
@@ -661,6 +767,18 @@ pub enum ParseError {
               "Idiomatic ownership, typed errors and iterator use; tests exist. One unwrap and some dense one-liners keep it from strong.",
             level: 3,
           },
+          {
+            id: "systems",
+            evidence: [
+              {
+                path: "src/automaton.rs",
+                note: "Hand-built state machine over raga grammar, compiled once and walked per note",
+              },
+            ],
+            thought:
+              "Designs its own automaton and data layout instead of reaching for a library; careful systems thinking, though at a small scale.",
+            level: 3,
+          },
         ],
         flags: [],
       },
@@ -801,6 +919,65 @@ def detect_emotion(text):
             thought:
               "Basic API use that works; no error handling, streaming, token limits or safety handling for a sensitive use case.",
             level: 2,
+          },
+          {
+            id: "ai_ml",
+            evidence: [
+              {
+                path: "app.py",
+                note: "Sends the user's text to a hosted model and returns its answer",
+              },
+            ],
+            thought:
+              "Calls a hosted LLM with a fixed prompt; no model, data or evaluation work of its own, so this is exposure to AI, not AI engineering.",
+            level: 1,
+          },
+          {
+            id: "python",
+            evidence: [
+              {
+                path: "app.py",
+                note: "Short Flask app gluing a prompt to an API call",
+              },
+            ],
+            thought:
+              "Working Python, but thin: one route, a prompt string and a hosted-model call.",
+            level: 2,
+          },
+          {
+            id: "backend",
+            evidence: [
+              {
+                path: "app.py",
+                note: "Two Flask routes returning JSON from the model",
+              },
+            ],
+            thought:
+              "A minimal web backend with no validation, persistence or error handling of note.",
+            level: 2,
+          },
+          {
+            id: "html",
+            evidence: [
+              {
+                path: "templates/index.html",
+                note: "Only its name was seen: a single page template",
+              },
+            ],
+            thought:
+              "One template exists; its contents were not sent, so only exposure can be credited.",
+            level: 1,
+          },
+          {
+            id: "css",
+            evidence: [
+              {
+                path: "static/style.css",
+                note: "Only its name was seen: one stylesheet",
+              },
+            ],
+            thought: "A stylesheet exists; nothing shows more than basic use.",
+            level: 1,
           },
         ],
         flags: ["readme_overclaims"],
@@ -997,6 +1174,18 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
             ],
             thought:
               "Thoughtful about money rounding and clear in structure; a test file exists for this service. Sorting inside the loop is wasteful but harmless at trip scale.",
+            level: 3,
+          },
+          {
+            id: "mobile",
+            evidence: [
+              {
+                path: "lib/screens/add_expense_screen.dart",
+                note: "Complete screen with form state, validation and navigation",
+              },
+            ],
+            thought:
+              "A usable mobile app with sensible screens and state handling; plain setState and no platform-specific work, so solid rather than strong.",
             level: 3,
           },
         ],
