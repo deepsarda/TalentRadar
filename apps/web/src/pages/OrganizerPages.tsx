@@ -1,7 +1,7 @@
 import { taxonomy } from "@talentradar/shared";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   ActionButton,
   ActionLink,
@@ -15,7 +15,14 @@ import {
   TextArea,
   TextInput,
 } from "../components/ui";
-import { getPublicEvents } from "../lib/api";
+import {
+  type CreateEventInput,
+  createOrganizerEvent,
+  getCurrentUser,
+  getOrganizerEvent,
+  getOrganizerEvents,
+  publishOrganizerEvent,
+} from "../lib/api";
 
 const eventSteps = ["Basics", "Timeline", "Teams and seats", "Requirements and quotas"] as const;
 const quickSteps = ["Upload", "Map columns", "Consent", "Build profiles"] as const;
@@ -40,13 +47,16 @@ function slugify(value: string) {
     .slice(0, 40);
 }
 
-function UnauthenticatedOrganizerNotice() {
+function istDateTimeToIso(value: string): string {
+  return new Date(`${value}:00+05:30`).toISOString();
+}
+
+function UnauthenticatedOrganizerNotice({ pending }: { pending: boolean }) {
+  if (pending) return null;
   return (
     <div className="context-notice">
       <span aria-hidden="true">i</span>
-      <p>
-        No organizer account is loaded. The console shows production forms without sample records.
-      </p>
+      <p>Sign in with GitHub to create events and access organizer-owned records.</p>
       <ActionLink to="/login" tone="secondary">
         Sign in
       </ActionLink>
@@ -55,8 +65,14 @@ function UnauthenticatedOrganizerNotice() {
 }
 
 export function OrganizerDashboard() {
-  const events = useQuery({ queryKey: ["organizer-public-events"], queryFn: getPublicEvents });
-  const published = events.data ?? [];
+  const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
+  const events = useQuery({
+    queryKey: ["organizer-events"],
+    queryFn: getOrganizerEvents,
+    enabled: Boolean(account.data),
+    retry: false,
+  });
+  const organizerEvents = events.data ?? [];
 
   return (
     <div className="portal-page organizer-dashboard">
@@ -73,21 +89,23 @@ export function OrganizerDashboard() {
           </>
         }
       />
-      <UnauthenticatedOrganizerNotice />
+      {!account.data ? <UnauthenticatedOrganizerNotice pending={account.isPending} /> : null}
       <div className="metric-strip">
         <div>
           <span>UPCOMING</span>
-          <strong>{published.filter((event) => event.status === "upcoming").length}</strong>
-          <small>Published records</small>
+          <strong>{organizerEvents.filter((event) => event.visibility === "draft").length}</strong>
+          <small>Draft events</small>
         </div>
         <div>
           <span>LIVE</span>
-          <strong>{published.filter((event) => event.status === "open").length}</strong>
-          <small>Accepting applications</small>
+          <strong>
+            {organizerEvents.filter((event) => event.visibility === "published").length}
+          </strong>
+          <small>Published events</small>
         </div>
         <div>
           <span>PAST</span>
-          <strong>{published.filter((event) => event.status === "closed").length}</strong>
+          <strong>{organizerEvents.filter((event) => event.visibility === "closed").length}</strong>
           <small>Closed records</small>
         </div>
         <div>
@@ -108,8 +126,11 @@ export function OrganizerDashboard() {
             </ActionLink>
           }
         >
-          {events.isPending ? <div className="loading-state">Reading event records…</div> : null}
-          {published.length === 0 && !events.isPending ? (
+          {events.isPending && account.data ? (
+            <div className="loading-state">Reading event records…</div>
+          ) : null}
+          {events.isError ? <div className="error-state">{events.error.message}</div> : null}
+          {organizerEvents.length === 0 && !events.isPending ? (
             <EmptyState
               title="No events in this workspace"
               action={<ActionLink to="/organizer/events/new">Create the first event</ActionLink>}
@@ -118,7 +139,7 @@ export function OrganizerDashboard() {
               counts from the service.
             </EmptyState>
           ) : null}
-          {published.length > 0 ? (
+          {organizerEvents.length > 0 ? (
             <div className="event-table">
               <div className="table-row table-head">
                 <span>EVENT</span>
@@ -127,14 +148,22 @@ export function OrganizerDashboard() {
                 <span>START</span>
                 <span />
               </div>
-              {published.map((event) => (
+              {organizerEvents.map((event) => (
                 <div className="table-row" key={event.id}>
                   <strong>{event.name}</strong>
-                  <Badge tone={event.status === "open" ? "success" : "neutral"}>
-                    {event.status}
+                  <Badge tone={event.visibility === "published" ? "success" : "neutral"}>
+                    {event.visibility}
                   </Badge>
-                  <span>{new Date(event.registrationClosesAt).toLocaleDateString()}</span>
-                  <span>{new Date(event.eventStartsAt).toLocaleDateString()}</span>
+                  <span>
+                    {event.registrationClosesAt
+                      ? new Date(event.registrationClosesAt).toLocaleDateString()
+                      : "Not set"}
+                  </span>
+                  <span>
+                    {event.eventStartsAt
+                      ? new Date(event.eventStartsAt).toLocaleDateString()
+                      : "Not set"}
+                  </span>
                   <ActionLink to={`/organizer/events/${event.id}`} tone="quiet">
                     Open
                   </ActionLink>
@@ -163,10 +192,28 @@ export function OrganizerDashboard() {
 }
 
 export function EventWizardPage() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
-  const [mode, setMode] = useState("in_person");
+  const [tagline, setTagline] = useState("");
+  const [description, setDescription] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [bannerUrl, setBannerUrl] = useState("");
+  const [mode, setMode] = useState<CreateEventInput["mode"]>("in_person");
+  const [venue, setVenue] = useState("");
+  const [timeline, setTimeline] = useState({
+    registrationOpensAt: "",
+    registrationClosesAt: "",
+    shortlistPublishesAt: "",
+    rsvpDeadlineAt: "",
+    eventStartsAt: "",
+    eventEndsAt: "",
+  });
+  const [minimumTeamSize, setMinimumTeamSize] = useState(2);
+  const [maximumTeamSize, setMaximumTeamSize] = useState(4);
+  const [capacity, setCapacity] = useState(100);
   const [requirements, setRequirements] = useState<RequirementDraft[]>([]);
   const [requirementSkill, setRequirementSkill] = useState("");
   const [nextRequirementId, setNextRequirementId] = useState(1);
@@ -187,6 +234,58 @@ export function EventWizardPage() {
     );
   };
 
+  const timelineComplete = Object.values(timeline).every(Boolean);
+  const stepValid = [
+    name.trim().length >= 3 &&
+      Boolean(slug) &&
+      Boolean(tagline.trim()) &&
+      Boolean(description.trim()) &&
+      (mode === "online" || Boolean(venue.trim())),
+    timelineComplete,
+    minimumTeamSize <= maximumTeamSize && capacity > 0,
+    requirements.length > 0 && requirements.some((requirement) => requirement.weight > 0),
+  ];
+
+  const createEvent = useMutation({
+    mutationFn: createOrganizerEvent,
+    onSuccess: async (event) => {
+      await queryClient.invalidateQueries({ queryKey: ["organizer-events"] });
+      navigate(`/organizer/events/${event.id}`);
+    },
+  });
+
+  const submit = () => {
+    if (!stepValid.every(Boolean)) return;
+    createEvent.mutate({
+      name: name.trim(),
+      slug,
+      tagline: tagline.trim(),
+      description: description.trim(),
+      ...(logoUrl ? { logoUrl } : {}),
+      ...(bannerUrl ? { bannerUrl } : {}),
+      links: [],
+      mode,
+      ...(venue ? { venue: venue.trim() } : {}),
+      timeline: {
+        timezone: "Asia/Kolkata",
+        registrationOpensAt: istDateTimeToIso(timeline.registrationOpensAt),
+        registrationClosesAt: istDateTimeToIso(timeline.registrationClosesAt),
+        shortlistPublishesAt: istDateTimeToIso(timeline.shortlistPublishesAt),
+        rsvpDeadlineAt: istDateTimeToIso(timeline.rsvpDeadlineAt),
+        eventStartsAt: istDateTimeToIso(timeline.eventStartsAt),
+        eventEndsAt: istDateTimeToIso(timeline.eventEndsAt),
+      },
+      teamSize: { min: minimumTeamSize, max: maximumTeamSize },
+      capacity,
+      requirements: requirements.map((requirement) => ({
+        skill: requirement.skill,
+        target: requirement.target,
+        weight: requirement.weight,
+        coverage: { mode: "any_member" },
+      })),
+    });
+  };
+
   return (
     <div className="portal-page wizard-page">
       <PageHeading
@@ -198,7 +297,7 @@ export function EventWizardPage() {
       <div className="wizard-layout">
         <Panel
           label={`STEP ${step + 1} / ${eventSteps.length}`}
-          title={eventSteps[step]}
+          title={eventSteps[step] ?? eventSteps[0]}
           className="wizard-main"
         >
           {step === 0 ? (
@@ -226,7 +325,12 @@ export function EventWizardPage() {
                 />
               </Field>
               <Field label="Tagline" className="full-field">
-                <TextInput placeholder="A concise line for the public event page" maxLength={140} />
+                <TextInput
+                  value={tagline}
+                  onChange={(event) => setTagline(event.target.value)}
+                  placeholder="A concise line for the public event page"
+                  maxLength={140}
+                />
               </Field>
               <Field
                 label="Description"
@@ -234,19 +338,34 @@ export function EventWizardPage() {
                 className="full-field"
               >
                 <TextArea
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
                   rows={8}
                   placeholder="Rules, prizes, themes, schedule and participation details"
                   maxLength={5000}
                 />
               </Field>
               <Field label="Logo URL">
-                <TextInput type="url" placeholder="https://…" />
+                <TextInput
+                  value={logoUrl}
+                  onChange={(event) => setLogoUrl(event.target.value)}
+                  type="url"
+                  placeholder="https://…"
+                />
               </Field>
               <Field label="Banner URL">
-                <TextInput type="url" placeholder="https://…" />
+                <TextInput
+                  value={bannerUrl}
+                  onChange={(event) => setBannerUrl(event.target.value)}
+                  type="url"
+                  placeholder="https://…"
+                />
               </Field>
               <Field label="Mode">
-                <SelectInput value={mode} onChange={(event) => setMode(event.target.value)}>
+                <SelectInput
+                  value={mode}
+                  onChange={(event) => setMode(event.target.value as CreateEventInput["mode"])}
+                >
                   <option value="in_person">In person</option>
                   <option value="online">Online</option>
                   <option value="hybrid">Hybrid</option>
@@ -260,7 +379,12 @@ export function EventWizardPage() {
                     : "Required for in-person and hybrid events."
                 }
               >
-                <TextInput placeholder="Building, campus or city" disabled={mode === "online"} />
+                <TextInput
+                  value={venue}
+                  onChange={(event) => setVenue(event.target.value)}
+                  placeholder="Building, campus or city"
+                  disabled={mode === "online"}
+                />
               </Field>
               <div className="repeater full-field">
                 <div>
@@ -279,22 +403,67 @@ export function EventWizardPage() {
           {step === 1 ? (
             <div className="timeline-grid">
               <Field label="Registration opens">
-                <TextInput type="datetime-local" />
+                <TextInput
+                  type="datetime-local"
+                  value={timeline.registrationOpensAt}
+                  onChange={(event) =>
+                    setTimeline((current) => ({
+                      ...current,
+                      registrationOpensAt: event.target.value,
+                    }))
+                  }
+                />
               </Field>
               <Field label="Registration closes" hint="Teams lock at this time.">
-                <TextInput type="datetime-local" />
+                <TextInput
+                  type="datetime-local"
+                  value={timeline.registrationClosesAt}
+                  onChange={(event) =>
+                    setTimeline((current) => ({
+                      ...current,
+                      registrationClosesAt: event.target.value,
+                    }))
+                  }
+                />
               </Field>
               <Field label="Shortlist published">
-                <TextInput type="datetime-local" />
+                <TextInput
+                  type="datetime-local"
+                  value={timeline.shortlistPublishesAt}
+                  onChange={(event) =>
+                    setTimeline((current) => ({
+                      ...current,
+                      shortlistPublishesAt: event.target.value,
+                    }))
+                  }
+                />
               </Field>
               <Field label="RSVP deadline">
-                <TextInput type="datetime-local" />
+                <TextInput
+                  type="datetime-local"
+                  value={timeline.rsvpDeadlineAt}
+                  onChange={(event) =>
+                    setTimeline((current) => ({ ...current, rsvpDeadlineAt: event.target.value }))
+                  }
+                />
               </Field>
               <Field label="Event starts">
-                <TextInput type="datetime-local" />
+                <TextInput
+                  type="datetime-local"
+                  value={timeline.eventStartsAt}
+                  onChange={(event) =>
+                    setTimeline((current) => ({ ...current, eventStartsAt: event.target.value }))
+                  }
+                />
               </Field>
               <Field label="Event ends">
-                <TextInput type="datetime-local" />
+                <TextInput
+                  type="datetime-local"
+                  value={timeline.eventEndsAt}
+                  onChange={(event) =>
+                    setTimeline((current) => ({ ...current, eventEndsAt: event.target.value }))
+                  }
+                />
               </Field>
               <div className="timezone-note full-field">
                 <span>TIMEZONE</span>
@@ -307,13 +476,31 @@ export function EventWizardPage() {
           {step === 2 ? (
             <div className="form-grid">
               <Field label="Minimum team size">
-                <TextInput type="number" min="1" max="6" defaultValue="2" />
+                <TextInput
+                  type="number"
+                  min="1"
+                  max="6"
+                  value={minimumTeamSize}
+                  onChange={(event) => setMinimumTeamSize(Number(event.target.value))}
+                />
               </Field>
               <Field label="Maximum team size">
-                <TextInput type="number" min="1" max="6" defaultValue="4" />
+                <TextInput
+                  type="number"
+                  min="1"
+                  max="6"
+                  value={maximumTeamSize}
+                  onChange={(event) => setMaximumTeamSize(Number(event.target.value))}
+                />
               </Field>
               <Field label="Participant capacity" hint="Seats to fill, not expected sign-ups.">
-                <TextInput type="number" min="1" max="5000" defaultValue="100" />
+                <TextInput
+                  type="number"
+                  min="1"
+                  max="5000"
+                  value={capacity}
+                  onChange={(event) => setCapacity(Number(event.target.value))}
+                />
               </Field>
               <Field label="CV requirement">
                 <SelectInput defaultValue="required">
@@ -374,7 +561,7 @@ export function EventWizardPage() {
                           <span>{requirement.target.toFixed(1)}</span>
                           <input
                             type="range"
-                            min="0"
+                            min="1"
                             max="5"
                             step="0.5"
                             value={requirement.target}
@@ -464,14 +651,25 @@ export function EventWizardPage() {
             </ActionButton>
             {step < eventSteps.length - 1 ? (
               <ActionButton
+                disabled={!stepValid[step]}
                 onClick={() => setStep((value) => Math.min(eventSteps.length - 1, value + 1))}
               >
                 Continue
               </ActionButton>
             ) : (
-              <ActionButton disabled>Create draft</ActionButton>
+              <ActionButton
+                disabled={!stepValid.every(Boolean) || createEvent.isPending}
+                onClick={submit}
+              >
+                {createEvent.isPending ? "Creating…" : "Create draft"}
+              </ActionButton>
             )}
           </div>
+          {createEvent.isError ? (
+            <div className="error-state" role="alert">
+              {createEvent.error.message}
+            </div>
+          ) : null}
         </Panel>
         <aside className="wizard-aside">
           <Panel label="PUBLIC / PREVIEW" title={name || "Untitled event"}>
@@ -513,7 +711,7 @@ export function QuickShortlistPage() {
       <div className="wizard-layout">
         <Panel
           label={`STEP ${step + 1} / ${quickSteps.length}`}
-          title={quickSteps[step]}
+          title={quickSteps[step] ?? quickSteps[0]}
           className="wizard-main"
         >
           {step === 0 ? (
@@ -665,54 +863,123 @@ function eventLabel(eventId?: string) {
 
 export function EventOverviewPage() {
   const { eventId } = useParams();
+  const queryClient = useQueryClient();
+  const event = useQuery({
+    queryKey: ["organizer-event", eventId],
+    queryFn: () => getOrganizerEvent(eventId ?? ""),
+    enabled: Boolean(eventId),
+    retry: false,
+  });
+  const publish = useMutation({
+    mutationFn: () => publishOrganizerEvent(eventId ?? ""),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["organizer-event", eventId] }),
+        queryClient.invalidateQueries({ queryKey: ["organizer-events"] }),
+        queryClient.invalidateQueries({ queryKey: ["public-events"] }),
+      ]);
+    },
+  });
+
+  if (event.isPending) return <div className="loading-state">Loading event workspace…</div>;
+  if (event.isError) {
+    return (
+      <div className="portal-page">
+        <EmptyState
+          title="Event unavailable"
+          action={<ActionLink to="/organizer">Back to events</ActionLink>}
+        >
+          {event.error.message}
+        </EmptyState>
+      </div>
+    );
+  }
+
   return (
     <div className="portal-page">
       <PageHeading
         eyebrow="ORGANIZER / EVENT"
-        title="Event overview"
+        title={event.data.name}
         description="Registration, team, profile, and timeline state for this workspace."
         action={
-          <ActionLink to={`/organizer/events/${eventId}/shortlist`}>Open shortlist</ActionLink>
+          <>
+            {event.data.visibility === "draft" ? (
+              <ActionButton onClick={() => publish.mutate()} disabled={publish.isPending}>
+                {publish.isPending ? "Publishing…" : "Publish event"}
+              </ActionButton>
+            ) : null}
+            <ActionLink to={`/organizer/events/${eventId}/shortlist`} tone="secondary">
+              Open shortlist
+            </ActionLink>
+          </>
         }
       />
       <div className="event-identity">
         <span>WORKSPACE</span>
-        <strong>{eventLabel(eventId)}</strong>
-        <Badge tone="warning">Not loaded</Badge>
+        <strong>{event.data.slug}</strong>
+        <Badge tone={event.data.visibility === "published" ? "success" : "warning"}>
+          {event.data.visibility}
+        </Badge>
       </div>
+      {publish.isError ? (
+        <div className="error-state" role="alert">
+          {publish.error.message}
+        </div>
+      ) : null}
       <div className="metric-strip">
         <div>
           <span>REGISTRATIONS</span>
-          <strong>—</strong>
-          <small>No event data loaded</small>
+          <strong>{event.data.metrics.registrations}</strong>
+          <small>Application records</small>
         </div>
         <div>
           <span>TEAMS</span>
-          <strong>—</strong>
-          <small>No event data loaded</small>
+          <strong>{event.data.metrics.teams}</strong>
+          <small>Team records</small>
         </div>
         <div>
           <span>PROFILES READY</span>
-          <strong>—</strong>
-          <small>No event data loaded</small>
+          <strong>{event.data.metrics.profilesReady}</strong>
+          <small>Built profiles</small>
         </div>
         <div>
           <span>DEADLINE</span>
-          <strong>—</strong>
-          <small>No timeline loaded</small>
+          <strong>
+            {event.data.timeline
+              ? new Date(event.data.timeline.registrationClosesAt).toLocaleDateString()
+              : "Not set"}
+          </strong>
+          <small>{event.data.timeline?.timezone ?? "No timeline"}</small>
         </div>
       </div>
       <div className="dashboard-grid">
         <Panel label="01 / ACTIVITY" title="Registration flow" className="span-two">
-          <EmptyState title="Event data unavailable">
-            Sign in and open an event from your organizer workspace to load its real registration
-            activity.
+          <EmptyState title="No registrations yet">
+            Applications will appear here after participants submit through the published event
+            page.
           </EmptyState>
         </Panel>
         <Panel label="02 / TIMELINE" title="Next milestone">
-          <EmptyState title="No timeline loaded">
-            Configured deadlines appear here with a live countdown.
-          </EmptyState>
+          {event.data.timeline ? (
+            <dl className="compact-definition-list">
+              <div>
+                <dt>Registration closes</dt>
+                <dd>{new Date(event.data.timeline.registrationClosesAt).toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Shortlist publishes</dt>
+                <dd>{new Date(event.data.timeline.shortlistPublishesAt).toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Event starts</dt>
+                <dd>{new Date(event.data.timeline.eventStartsAt).toLocaleString()}</dd>
+              </div>
+            </dl>
+          ) : (
+            <EmptyState title="No timeline configured">
+              Add the event timeline in settings.
+            </EmptyState>
+          )}
         </Panel>
       </div>
     </div>
@@ -724,30 +991,32 @@ export function EventSectionPage({
 }: {
   section: "requirements" | "participants" | "teams" | "settings";
 }) {
-  const copy = {
-    requirements: [
-      "Requirements and quotas",
-      "Edit target levels, weights, quotas, and college aliases before publishing a run.",
-    ],
-    participants: [
-      "Participants",
-      "Track consent, GitHub verification, CV processing, and profile build state.",
-    ],
-    teams: [
-      "Teams",
-      "Inspect membership, submission eligibility, locks, and looking-for-team participants.",
-    ],
-    settings: [
-      "Event settings",
-      "Update the public page, timeline, team rules, links, visibility, and retention controls.",
-    ],
-  }[section];
+  const [copyTitle, copyDescription] = (
+    {
+      requirements: [
+        "Requirements and quotas",
+        "Edit target levels, weights, quotas, and college aliases before publishing a run.",
+      ],
+      participants: [
+        "Participants",
+        "Track consent, GitHub verification, CV processing, and profile build state.",
+      ],
+      teams: [
+        "Teams",
+        "Inspect membership, submission eligibility, locks, and looking-for-team participants.",
+      ],
+      settings: [
+        "Event settings",
+        "Update the public page, timeline, team rules, links, visibility, and retention controls.",
+      ],
+    } as const
+  )[section];
   return (
     <div className="portal-page">
       <PageHeading
         eyebrow={`ORGANIZER / ${section.toUpperCase()}`}
-        title={copy[0]}
-        description={copy[1]}
+        title={copyTitle}
+        description={copyDescription}
         action={
           section === "requirements" ? (
             <ActionButton disabled>Save changes</ActionButton>

@@ -1,5 +1,6 @@
+import { taxonomy } from "@talentradar/shared";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ActionLink, Badge, EmptyState, ErrorState, LoadingState, Panel } from "../components/ui";
 import { getPublicEvent, getPublicEvents } from "../lib/api";
 
@@ -62,7 +63,7 @@ export function LandingPage() {
           </div>
         </div>
 
-        <div className="hero-terminal" role="region" aria-label="TalentRadar evidence flow">
+        <section className="hero-terminal" aria-label="TalentRadar evidence flow">
           <div className="hero-terminal-bar">
             <span>PROFILE_BUILD / INPUT CONTRACT</span>
             <Badge tone="success">TRACEABLE</Badge>
@@ -104,7 +105,7 @@ export function LandingPage() {
               <span>04</span> Logged organizer decisions
             </li>
           </ul>
-        </div>
+        </section>
       </section>
 
       <section className="method-section" id="method">
@@ -281,20 +282,74 @@ export function PublicEventPage() {
           {event.data.venue ? <span>{event.data.venue}</span> : null}
           <span>Starts {new Date(event.data.eventStartsAt).toLocaleString()}</span>
         </div>
-        <ActionLink to={`/participant/apply/${event.data.slug}`}>Start application</ActionLink>
+        {event.data.status === "open" ? (
+          <ActionLink to={`/participant/apply/${event.data.slug}`}>Start application</ActionLink>
+        ) : null}
+        {event.data.status === "upcoming" ? (
+          <p className="muted-copy">
+            Registration opens {new Date(event.data.registrationOpensAt).toLocaleString()}.
+          </p>
+        ) : null}
+        {event.data.status === "closed" ? (
+          <p className="muted-copy">Registration is closed for this event.</p>
+        ) : null}
       </section>
       <div className="event-public-grid">
         <Panel label="01 / EVENT" title="What to expect">
-          <p className="prose-copy">
-            Event description and organizer links will appear here exactly as published by the
-            organizer.
-          </p>
+          <p className="prose-copy">{event.data.description}</p>
+          {event.data.links.length > 0 ? (
+            <div className="hero-actions">
+              {event.data.links.map((link) => (
+                <a href={link.url} key={link.url} rel="noreferrer" target="_blank">
+                  {link.label} ↗
+                </a>
+              ))}
+            </div>
+          ) : null}
         </Panel>
         <Panel label="02 / DEADLINE" title="Registration closes">
           <time className="deadline-value" dateTime={event.data.registrationClosesAt}>
             {new Date(event.data.registrationClosesAt).toLocaleString()}
           </time>
-          <p className="muted-copy">Teams lock at this deadline.</p>
+          <p className="muted-copy">Teams lock at this deadline · {event.data.timezone}.</p>
+        </Panel>
+        <Panel label="03 / REQUIREMENTS" title="What teams are evaluated against">
+          <div className="requirement-editor">
+            {event.data.requirements.map((requirement) => (
+              <div className="requirement-edit-row" key={requirement.skill}>
+                <strong>
+                  {taxonomy.technologies[requirement.skill]?.label ??
+                    taxonomy.domains[requirement.skill]?.label ??
+                    requirement.skill}
+                </strong>
+                <span>Target {requirement.target.toFixed(1)}</span>
+                <span>Weight {requirement.weight}</span>
+                <span>
+                  {requirement.coverage.mode === "any_member"
+                    ? "Any member"
+                    : `${requirement.coverage.minMembers} members`}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+        <Panel label="04 / TEAMS" title="Team and capacity rules">
+          <dl className="compact-definition-list">
+            <div>
+              <dt>Team size</dt>
+              <dd>
+                {event.data.teamSize.min}–{event.data.teamSize.max} people
+              </dd>
+            </div>
+            <div>
+              <dt>Participant capacity</dt>
+              <dd>{event.data.capacity} seats</dd>
+            </div>
+            <div>
+              <dt>Shortlist publishes</dt>
+              <dd>{new Date(event.data.shortlistPublishesAt).toLocaleString()}</dd>
+            </div>
+          </dl>
         </Panel>
       </div>
     </div>
@@ -302,6 +357,10 @@ export function PublicEventPage() {
 }
 
 export function LoginPage() {
+  const [searchParams] = useSearchParams();
+  const returnTo = searchParams.get("returnTo");
+  const error = searchParams.get("error");
+  const githubHref = `/auth/github${returnTo?.startsWith("/") ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`;
   return (
     <div className="narrow-page">
       <Panel label="AUTH / GITHUB" title="Sign in to TalentRadar">
@@ -324,7 +383,12 @@ export function LoginPage() {
               <dd>Public repositories only. No write permission.</dd>
             </div>
           </dl>
-          <a className="btn terminal-action action-primary" href="/auth/github">
+          {error ? (
+            <div className="error-state" role="alert">
+              GitHub sign-in did not complete. Please try again.
+            </div>
+          ) : null}
+          <a className="btn terminal-action action-primary" href={githubHref}>
             <span aria-hidden="true">[</span> Continue with GitHub <span aria-hidden="true">]</span>
           </a>
           <p className="fine-print">

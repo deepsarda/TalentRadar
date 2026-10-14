@@ -108,6 +108,7 @@ export const HackathonSchema = z.object({
 });
 
 export type Evidence = z.infer<typeof EvidenceSchema>;
+export type Confidence = z.infer<typeof ConfidenceSchema>;
 export type ProfileSkill = z.infer<typeof ProfileSkillSchema>;
 export type PersonProfile = z.infer<typeof PersonProfileSchema>;
 export type Team = z.infer<typeof TeamSchema>;

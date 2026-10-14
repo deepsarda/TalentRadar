@@ -11,7 +11,7 @@
     "build": "pnpm -r --if-present build",
     "check": "pnpm check:biome && pnpm check:types && pnpm test && pnpm build",
     "check:biome": "biome check .",
-    "check:types": "pnpm -r --if-present check:types",
+    "check:types": "pnpm --filter @talentradar/shared build && pnpm -r --if-present check:types",
     "dev": "pnpm --parallel --filter './apps/*' dev",
     "fix": "biome check --write .",
     "test": "pnpm -r --if-present test"

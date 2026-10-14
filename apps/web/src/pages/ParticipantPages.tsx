@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { taxonomy } from "@talentradar/shared";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import {
   ActionButton,
   ActionLink,
@@ -13,6 +15,16 @@ import {
   StepRail,
   TextInput,
 } from "../components/ui";
+import {
+  getCurrentUser,
+  getParticipantOverview,
+  getParticipantApplication,
+  getParticipantProfile,
+  getParticipantRepositories,
+  getRuntimeConfig,
+  submitParticipantApplication,
+  uploadParticipantCv,
+} from "../lib/api";
 
 const onboardingSteps = ["Your details", "CV", "Repositories", "Consent", "Review"] as const;
 
@@ -20,10 +32,7 @@ function ParticipantNotice() {
   return (
     <div className="context-notice">
       <span aria-hidden="true">i</span>
-      <p>
-        This workspace contains no sample account or application. Sign in with GitHub to load your
-        own data.
-      </p>
+      <p>Sign in with GitHub to load your profile, applications, and event teams.</p>
       <ActionLink to="/login" tone="secondary">
         Sign in
       </ActionLink>
@@ -32,6 +41,15 @@ function ParticipantNotice() {
 }
 
 export function ParticipantDashboard() {
+  const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
+  const overview = useQuery({
+    queryKey: ["participant-overview"],
+    queryFn: getParticipantOverview,
+    enabled: Boolean(account.data),
+    retry: false,
+  });
+  const applications = overview.data?.applications ?? [];
+
   return (
     <div className="portal-page">
       <PageHeading
@@ -40,52 +58,91 @@ export function ParticipantDashboard() {
         description="Apply to an event, build one reusable evidence profile, and manage your team."
         action={<ActionLink to="/">Browse public events</ActionLink>}
       />
-      <ParticipantNotice />
+      {!account.data && !account.isPending ? <ParticipantNotice /> : null}
 
-      <div className="metric-strip" role="group" aria-label="Application summary">
+      <section className="metric-strip" aria-label="Application summary">
         <div>
           <span>APPLICATIONS</span>
-          <strong>0</strong>
-          <small>No account data loaded</small>
+          <strong>{applications.length}</strong>
+          <small>{account.data ? "Saved applications" : "Sign in to load"}</small>
         </div>
         <div>
           <span>OPEN ACTIONS</span>
-          <strong>0</strong>
-          <small>Nothing requires attention</small>
+          <strong>
+            {applications.filter((application) => application.status === "draft").length}
+          </strong>
+          <small>Drafts needing action</small>
         </div>
         <div>
           <span>PROFILE</span>
-          <strong>—</strong>
-          <small>Sign in to check status</small>
+          <strong>{overview.data?.profile?.status ?? "—"}</strong>
+          <small>
+            {overview.data?.profile
+              ? `Build version ${overview.data.profile.version}`
+              : "Not built"}
+          </small>
         </div>
         <div>
           <span>TEAM</span>
-          <strong>—</strong>
-          <small>No event selected</small>
+          <strong>{applications.length > 0 ? "OPEN" : "—"}</strong>
+          <small>{applications.length > 0 ? "Open an application" : "No event selected"}</small>
         </div>
-      </div>
+      </section>
 
       <div className="dashboard-grid">
         <Panel label="01 / APPLICATIONS" title="Active events" className="span-two">
-          <EmptyState
-            title="No applications yet"
-            action={<ActionLink to="/">Find an event</ActionLink>}
-          >
-            Applications appear here after you open a published event and start its participant
-            flow.
-          </EmptyState>
+          {overview.isPending && account.data ? (
+            <div className="loading-state">Loading applications…</div>
+          ) : null}
+          {applications.length === 0 && !overview.isPending ? (
+            <EmptyState
+              title="No applications yet"
+              action={<ActionLink to="/">Find an event</ActionLink>}
+            >
+              Applications appear here after you open a published event and start its participant
+              flow.
+            </EmptyState>
+          ) : null}
+          {applications.length > 0 ? (
+            <div className="event-table participant-application-table">
+              <div className="table-row table-head">
+                <span>EVENT</span>
+                <span>STATUS</span>
+                <span>UPDATED</span>
+                <span />
+              </div>
+              {applications.map((application) => (
+                <div className="table-row" key={application.id}>
+                  <strong>{application.eventName}</strong>
+                  <Badge tone={application.status === "selected" ? "success" : "neutral"}>
+                    {application.status.replace("_", " ")}
+                  </Badge>
+                  <span>{new Date(application.updatedAt).toLocaleDateString()}</span>
+                  <ActionLink
+                    to={`/participant/applications/${application.id}/status`}
+                    tone="quiet"
+                  >
+                    Open
+                  </ActionLink>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </Panel>
         <Panel label="02 / PROFILE" title="Evidence profile">
           <div className="profile-readiness">
-            <ProgressBar value={0} label="Profile completeness" />
+            <ProgressBar
+              value={overview.data?.profile?.status === "ready" ? 100 : overview.data ? 50 : 0}
+              label="Profile completeness"
+            />
             <dl className="compact-definition-list">
               <div>
                 <dt>Identity</dt>
-                <dd>Not connected</dd>
+                <dd>{overview.data?.account.login ?? "Not connected"}</dd>
               </div>
               <div>
                 <dt>CV</dt>
-                <dd>Not provided</dd>
+                <dd>{overview.data?.account.hasCv ? "Uploaded" : "Not provided"}</dd>
               </div>
               <div>
                 <dt>Repositories</dt>
@@ -104,12 +161,87 @@ export function ParticipantDashboard() {
 
 export function ParticipantOnboarding() {
   const { slug } = useParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [step, setStep] = useState(0);
   const [consented, setConsented] = useState(false);
+  const [syntheticCvConfirmed, setSyntheticCvConfirmed] = useState(false);
   const [details, setDetails] = useState({ name: "", college: "", year: "", branch: "" });
+  const [selectedRepositories, setSelectedRepositories] = useState<string[]>([]);
+  const [uploadedCv, setUploadedCv] = useState<{ id: string; name: string; size: number } | null>(
+    null,
+  );
+  const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
+  const overview = useQuery({
+    queryKey: ["participant-overview"],
+    queryFn: getParticipantOverview,
+    enabled: Boolean(account.data),
+    retry: false,
+  });
+  const repositories = useQuery({
+    queryKey: ["participant-repositories"],
+    queryFn: getParticipantRepositories,
+    enabled: Boolean(account.data) && step >= 2,
+    retry: false,
+  });
+  const runtimeConfig = useQuery({ queryKey: ["runtime-config"], queryFn: getRuntimeConfig });
+  const uploadCv = useMutation({
+    mutationFn: uploadParticipantCv,
+    onSuccess: async (cv) => {
+      setUploadedCv(cv);
+      await queryClient.invalidateQueries({ queryKey: ["participant-overview"] });
+    },
+  });
+  const submitApplication = useMutation({
+    mutationFn: () => {
+      if (!slug) throw new Error("Open a published event before submitting an application");
+      return submitParticipantApplication(slug, {
+        details,
+        repositories: selectedRepositories,
+        consent: true,
+        syntheticCv: syntheticCvConfirmed,
+      });
+    },
+    onSuccess: async (result) => {
+      await queryClient.invalidateQueries({ queryKey: ["participant-overview"] });
+      navigate(`/participant/applications/${result.application.id}/status`);
+    },
+  });
+
+  useEffect(() => {
+    if (!overview.data) return;
+    setDetails((current) => ({
+      name: current.name || overview.data.account.name,
+      college: current.college || overview.data.account.college || "",
+      year: current.year || overview.data.account.year || "",
+      branch: current.branch || overview.data.account.branch || "",
+    }));
+  }, [overview.data]);
 
   const updateDetail = (field: keyof typeof details, value: string) => {
     setDetails((current) => ({ ...current, [field]: value }));
+  };
+
+  const cvReady = Boolean(uploadedCv || overview.data?.account.hasCv);
+  const privacyReady =
+    consented &&
+    (runtimeConfig.data?.modelDataPolicy !== "synthetic_only" || syntheticCvConfirmed);
+  const stepValid = [
+    Object.values(details).every((value) => value.trim().length > 0),
+    cvReady,
+    selectedRepositories.length > 0 && selectedRepositories.length <= 6,
+    privacyReady,
+    Boolean(slug) && privacyReady && cvReady && selectedRepositories.length > 0,
+  ];
+
+  const toggleRepository = (fullName: string) => {
+    setSelectedRepositories((current) =>
+      current.includes(fullName)
+        ? current.filter((repository) => repository !== fullName)
+        : current.length < 6
+          ? [...current, fullName]
+          : current,
+    );
   };
 
   return (
@@ -121,10 +253,12 @@ export function ParticipantOnboarding() {
       />
       <StepRail steps={onboardingSteps} current={step} />
 
+      {!account.data && !account.isPending ? <ParticipantNotice /> : null}
+
       <div className="wizard-layout">
         <Panel
           label={`STEP ${step + 1} / ${onboardingSteps.length}`}
-          title={onboardingSteps[step]}
+          title={onboardingSteps[step] ?? onboardingSteps[0]}
           className="wizard-main"
         >
           {step === 0 ? (
@@ -176,29 +310,91 @@ export function ParticipantOnboarding() {
               <span aria-hidden="true">PDF</span>
               <h3>Choose your current CV</h3>
               <p>PDF only, up to 2 MB. You can inspect and replace it before processing.</p>
-              <input id="participant-cv" type="file" accept="application/pdf,.pdf" />
+              <input
+                id="participant-cv"
+                type="file"
+                accept="application/pdf,.pdf"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) uploadCv.mutate(file);
+                }}
+              />
               <label className="btn terminal-action action-secondary" htmlFor="participant-cv">
-                [ Choose PDF ]
+                [ {uploadCv.isPending ? "Uploading…" : cvReady ? "Replace PDF" : "Choose PDF"} ]
               </label>
+              {uploadedCv ? (
+                <p className="muted-copy">
+                  Uploaded {uploadedCv.name} · {(uploadedCv.size / 1024).toFixed(0)} KB
+                </p>
+              ) : overview.data?.account.hasCv ? (
+                <p className="muted-copy">A CV is already stored for this profile.</p>
+              ) : null}
+              {uploadCv.isError ? (
+                <div className="error-state" role="alert">
+                  {uploadCv.error.message}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
           {step === 2 ? (
             <div className="repository-step">
-              <div className="context-notice compact">
-                <span aria-hidden="true">i</span>
-                <p>
-                  Connect GitHub to load your public repositories. Private repository permission is
-                  never requested.
-                </p>
-                <ActionLink to="/login" tone="secondary">
-                  Connect GitHub
-                </ActionLink>
-              </div>
-              <EmptyState title="No repositories loaded">
-                After sign-in, choose up to six public repositories. Pinned repositories are
-                selected first, and you remain in control of the final list.
-              </EmptyState>
+              {!account.data ? (
+                <div className="context-notice compact">
+                  <span aria-hidden="true">i</span>
+                  <p>Connect GitHub to load the public repositories owned by your account.</p>
+                  <ActionLink
+                    to={`/login?returnTo=${encodeURIComponent(`/participant/apply/${slug ?? ""}`)}`}
+                    tone="secondary"
+                  >
+                    Connect GitHub
+                  </ActionLink>
+                </div>
+              ) : null}
+              {repositories.isPending && account.data ? (
+                <div className="loading-state">Reading public repositories…</div>
+              ) : null}
+              {repositories.isError ? (
+                <div className="error-state" role="alert">
+                  {repositories.error.message}
+                </div>
+              ) : null}
+              {repositories.data?.length === 0 ? (
+                <EmptyState title="No repositories available">
+                  GitHub did not return an eligible public repository for this account.
+                </EmptyState>
+              ) : null}
+              {repositories.data && repositories.data.length > 0 ? (
+                <div className="repository-picker">
+                  <div className="repository-picker-heading">
+                    <span>SELECTED {selectedRepositories.length} / 6</span>
+                    <small>Fork authorship is verified during processing.</small>
+                  </div>
+                  {repositories.data.map((repository) => (
+                    <label
+                      className={`repository-choice ${repository.eligible ? "" : "disabled"}`}
+                      key={repository.fullName}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedRepositories.includes(repository.fullName)}
+                        disabled={!repository.eligible}
+                        onChange={() => toggleRepository(repository.fullName)}
+                      />
+                      <span>
+                        <strong>{repository.fullName}</strong>
+                        <small>
+                          {repository.language ?? "Language unavailable"} ·{" "}
+                          {(repository.sizeKb / 1024).toFixed(1)} MB
+                          {repository.fork ? " · fork" : ""}
+                        </small>
+                        {repository.description ? <p>{repository.description}</p> : null}
+                        {repository.exclusionReason ? <em>{repository.exclusionReason}</em> : null}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -223,6 +419,19 @@ export function ParticipantOnboarding() {
                 />
                 <span>I understand and consent to this automated evaluation.</span>
               </label>
+              {runtimeConfig.data?.modelDataPolicy === "synthetic_only" ? (
+                <label className="terminal-check">
+                  <input
+                    type="checkbox"
+                    checked={syntheticCvConfirmed}
+                    onChange={(event) => setSyntheticCvConfirmed(event.target.checked)}
+                  />
+                  <span>
+                    This free-tier deployment accepts synthetic CVs only. I confirm this PDF does
+                    not contain a real person's personal data.
+                  </span>
+                </label>
+              ) : null}
             </div>
           ) : null}
 
@@ -247,23 +456,25 @@ export function ParticipantOnboarding() {
                 </div>
                 <div>
                   <dt>CV</dt>
-                  <dd>Not selected</dd>
+                  <dd>{cvReady ? (uploadedCv?.name ?? "Stored PDF") : "Not selected"}</dd>
                 </div>
                 <div>
                   <dt>Repositories</dt>
-                  <dd>None selected</dd>
+                  <dd>{selectedRepositories.length || "None selected"}</dd>
                 </div>
                 <div>
                   <dt>Consent</dt>
                   <dd>
-                    <Badge tone={consented ? "success" : "warning"}>
-                      {consented ? "Granted" : "Required"}
+                    <Badge tone={privacyReady ? "success" : "warning"}>
+                      {privacyReady ? "Granted" : "Required"}
                     </Badge>
                   </dd>
                 </div>
               </dl>
               <div className="submission-note">
-                <strong>Nothing has been submitted.</strong>
+                <strong>
+                  {slug ? "Ready to create the application." : "Choose an event first."}
+                </strong>
                 <p>
                   Profile processing begins only after required details, a repository selection, and
                   consent are present.
@@ -282,14 +493,25 @@ export function ParticipantOnboarding() {
             </ActionButton>
             {step < onboardingSteps.length - 1 ? (
               <ActionButton
+                disabled={!stepValid[step]}
                 onClick={() => setStep((value) => Math.min(onboardingSteps.length - 1, value + 1))}
               >
                 Continue
               </ActionButton>
             ) : (
-              <ActionButton disabled>Build profile</ActionButton>
+              <ActionButton
+                disabled={!stepValid.every(Boolean) || submitApplication.isPending}
+                onClick={() => submitApplication.mutate()}
+              >
+                {submitApplication.isPending ? "Submitting…" : "Apply and build profile"}
+              </ActionButton>
             )}
           </div>
+          {submitApplication.isError ? (
+            <div className="error-state" role="alert">
+              {submitApplication.error.message}
+            </div>
+          ) : null}
         </Panel>
 
         <aside className="wizard-aside">
@@ -326,31 +548,136 @@ export function ParticipantOnboarding() {
 }
 
 export function ParticipantProfilePage() {
+  const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
+  const profile = useQuery({
+    queryKey: ["participant-profile"],
+    queryFn: getParticipantProfile,
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.profile.status === "pending" || query.state.data?.profile.status === "building"
+        ? 5000
+        : false,
+  });
+  const selectedSkill = profile.data?.profile.skills.find((skill) => skill.id === selectedSkillId);
+  const progress = (profile.data?.jobs ?? [])
+    .flatMap((job) => job.progress)
+    .sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
+
+  if (profile.isPending) return <div className="loading-state">Loading evidence profile…</div>;
+  if (profile.isError) {
+    return (
+      <div className="portal-page">
+        <PageHeading
+          eyebrow="PARTICIPANT / PROFILE"
+          title="Your evidence profile"
+          description="Every skill must be traceable to repository files at a fixed commit."
+          action={<ActionLink to="/participant/onboarding">Complete profile</ActionLink>}
+        />
+        <EmptyState title="No profile has been built">
+          Open a published event, choose repositories, provide consent, and submit the application
+          to start a real profile build.
+        </EmptyState>
+      </div>
+    );
+  }
+
   return (
     <div className="portal-page">
       <PageHeading
         eyebrow="PARTICIPANT / PROFILE"
         title="Your evidence profile"
         description="Every skill must be traceable to repository files at a fixed commit."
-        action={<ActionLink to="/participant/onboarding">Complete profile</ActionLink>}
+        action={<ActionLink to="/participant/onboarding">Change inputs</ActionLink>}
       />
-      <ParticipantNotice />
+      <div className="event-identity">
+        <span>PROFILE</span>
+        <strong>VERSION {profile.data.profile.version}</strong>
+        <Badge tone={profile.data.profile.status === "ready" ? "success" : "warning"}>
+          {profile.data.profile.status}
+        </Badge>
+        <small>
+          {profile.data.profile.builtAt
+            ? new Date(profile.data.profile.builtAt).toLocaleString()
+            : "Build not complete"}
+        </small>
+      </div>
       <div className="two-column-layout">
         <Panel label="EVIDENCE / SKILLS" title="Detected skills" className="span-two">
-          <EmptyState title="No profile has been built">
-            Connect GitHub, choose repositories, provide consent, and start the profile build to see
-            evidence here.
-          </EmptyState>
+          {profile.data.profile.skills.length === 0 ? (
+            <EmptyState title={profile.data.profile.status === "failed" ? "Profile build failed" : "No skills available yet"}>
+              {profile.data.profile.error ??
+                "Real worker progress appears below while repository and CV processing continues."}
+            </EmptyState>
+          ) : (
+            <div className="profile-skill-list">
+              {profile.data.profile.skills.map((skill) => (
+                <button
+                  type="button"
+                  className={selectedSkillId === skill.id ? "selected" : ""}
+                  key={skill.id}
+                  onClick={() => setSelectedSkillId(skill.id)}
+                >
+                  <span>
+                    <strong>
+                      {taxonomy.technologies[skill.id]?.label ??
+                        taxonomy.domains[skill.id]?.label ??
+                        skill.id}
+                    </strong>
+                    <small>{skill.evidence.length} cited files</small>
+                  </span>
+                  <span>LVL {skill.level.toFixed(2)}</span>
+                  <Badge tone={skill.confidence === "high" ? "success" : "neutral"}>
+                    {skill.confidence} confidence
+                  </Badge>
+                  <b>{skill.effective.toFixed(2)} effective</b>
+                </button>
+              ))}
+            </div>
+          )}
         </Panel>
-        <Panel label="INPUT / CV" title="Current CV">
-          <EmptyState title="No CV on file">
-            A PDF can be added during onboarding. Replacing it later starts a new profile build.
-          </EmptyState>
+        <Panel label="EVIDENCE / DETAIL" title={selectedSkill ? "Selected skill" : "Choose a skill"}>
+          {selectedSkill ? (
+            <div className="skill-evidence-detail">
+              <p>{selectedSkill.thought}</p>
+              {selectedSkill.evidence.map((evidence) => (
+                <a
+                  href={`https://github.com/${evidence.repository}/blob/${evidence.commitSha}/${evidence.path}`}
+                  key={`${evidence.repository}-${evidence.path}`}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  <strong>{evidence.path}</strong>
+                  <span>{evidence.repository}@{evidence.commitSha.slice(0, 8)}</span>
+                  <small>{evidence.note}</small>
+                </a>
+              ))}
+            </div>
+          ) : (
+            <p className="muted-copy">Select a skill to inspect its proof, interpretation, and frozen commit.</p>
+          )}
         </Panel>
         <Panel label="INPUT / REPOSITORIES" title="Selected repositories">
-          <EmptyState title="No repositories selected">
-            Up to six public repositories can be included in the evidence profile.
-          </EmptyState>
+          <dl className="compact-definition-list">
+            {profile.data.profile.repos.map((repository) => (
+              <div key={repository.fullName}>
+                <dt>{repository.fullName}</dt>
+                <dd>{repository.sha?.slice(0, 10) ?? "Processing"}</dd>
+              </div>
+            ))}
+          </dl>
+        </Panel>
+        <Panel label="BUILD / REAL EVENTS" title="Profile processing" className="span-two">
+          {progress.length > 0 ? (
+            <div className="mockup-code real-build-log" aria-live="polite">
+              {progress.map((event, index) => (
+                <pre data-prefix={String(index + 1).padStart(2, "0")} key={`${event.at}-${event.code}`}>
+                  <code>{event.message}</code>
+                </pre>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="No worker events yet">The queued build has not been claimed.</EmptyState>
+          )}
         </Panel>
       </div>
     </div>
@@ -438,6 +765,23 @@ export function ParticipantTeamPage() {
 export function ParticipantStatusPage() {
   const { applicationId } = useParams();
   const hasApplication = applicationId && applicationId !== "current";
+  const application = useQuery({
+    queryKey: ["participant-application", applicationId],
+    queryFn: () => getParticipantApplication(applicationId ?? ""),
+    enabled: Boolean(hasApplication),
+    retry: false,
+  });
+  const statusCopy = {
+    draft: "Your evidence profile and team can still be completed before registration closes.",
+    submitted: "Your team is submitted. You can review your own evidence while the organizer prepares the shortlist.",
+    under_review: "The organizer is reviewing submitted teams. Rank and implied odds remain private.",
+    selected: "Your team was selected. Confirm attendance before the RSVP deadline.",
+    waitlisted: "Your team is on the waitlist. Other teams and hidden shortlist parameters remain private.",
+    not_selected: "Your team was not selected for this event. Your own evidence profile remains available.",
+    confirmed: "Your attendance is confirmed for this event.",
+    declined: "Your team declined its selected place.",
+  } as const;
+
   return (
     <div className="portal-page">
       <PageHeading
@@ -447,18 +791,46 @@ export function ParticipantStatusPage() {
       />
       <Panel
         label="APPLICATION / DECISION"
-        title={hasApplication ? "Application unavailable" : "No active application"}
+        title={application.data?.event.name ?? (hasApplication ? "Loading application" : "No active application")}
       >
-        <EmptyState
-          title={hasApplication ? "Application not found" : "Start with a published event"}
-          action={<ActionLink to="/">Browse events</ActionLink>}
-        >
-          {hasApplication
-            ? "This application could not be loaded for the signed-in account."
-            : "Your application status will never expose another team's rank or score."}
-        </EmptyState>
+        {application.isPending && hasApplication ? <div className="loading-state">Loading application…</div> : null}
+        {application.isError || !hasApplication ? (
+          <EmptyState
+            title={hasApplication ? "Application not found" : "Start with a published event"}
+            action={<ActionLink to="/">Browse events</ActionLink>}
+          >
+            {hasApplication
+              ? "This application could not be loaded for the signed-in account."
+              : "Your application status will never expose another team's rank or score."}
+          </EmptyState>
+        ) : null}
+        {application.data ? (
+          <div className="application-decision">
+            <Badge tone={application.data.status === "selected" || application.data.status === "confirmed" ? "success" : "neutral"}>
+              {application.data.status.replace("_", " ")}
+            </Badge>
+            <h2>{statusCopy[application.data.status]}</h2>
+            <dl className="compact-definition-list">
+              <div>
+                <dt>Last updated</dt>
+                <dd>{new Date(application.data.updatedAt).toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Team</dt>
+                <dd>{application.data.teamId ? "Connected" : "Not formed"}</dd>
+              </div>
+              <div>
+                <dt>Timezone</dt>
+                <dd>{application.data.event.timeline?.timezone ?? "Unavailable"}</dd>
+              </div>
+            </dl>
+            {!application.data.teamId && application.data.status === "draft" ? (
+              <ActionLink to="/participant/team/current">Create or join a team</ActionLink>
+            ) : null}
+          </div>
+        ) : null}
       </Panel>
-      <div className="status-legend" role="group" aria-label="Possible application states">
+      <section className="status-legend" aria-label="Possible application states">
         <span>Possible states</span>
         {[
           "draft",
@@ -472,7 +844,7 @@ export function ParticipantStatusPage() {
         ].map((status) => (
           <code key={status}>{status}</code>
         ))}
-      </div>
+      </section>
     </div>
   );
 }

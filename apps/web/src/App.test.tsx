@@ -1,6 +1,16 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+
+function renderApp() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>,
+  );
+}
 
 beforeEach(() => {
   window.history.pushState({}, "", "/");
@@ -16,7 +26,7 @@ beforeEach(() => {
 
 describe("TalentRadar application shell", () => {
   it("renders the public product without demo records", async () => {
-    render(<App />);
+    renderApp();
 
     expect(
       screen.getByRole("heading", { name: /shortlist teams by the work/i }),
@@ -27,7 +37,7 @@ describe("TalentRadar application shell", () => {
 
   it("provides a separate organizer console and complete event wizard", () => {
     window.history.pushState({}, "", "/organizer/events/new");
-    render(<App />);
+    renderApp();
 
     expect(
       screen.getByRole("heading", { name: /create a hackathon workspace/i }),
@@ -38,7 +48,7 @@ describe("TalentRadar application shell", () => {
 
   it("provides a separate participant portal", () => {
     window.history.pushState({}, "", "/participant");
-    render(<App />);
+    renderApp();
 
     expect(screen.getByRole("heading", { name: /your applications/i })).toBeInTheDocument();
     expect(screen.getByText(/no applications yet/i)).toBeInTheDocument();

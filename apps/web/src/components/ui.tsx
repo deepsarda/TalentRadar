@@ -209,14 +209,10 @@ export function ScoreBar({ value, target = 5 }: { value: number; target?: number
   const segmentCount = 10;
   const filled = Math.round((Math.min(value, 5) / 5) * segmentCount);
   return (
-    <span
-      className="score-bar"
-      role="meter"
-      aria-label="Skill evidence level"
-      aria-valuemin={0}
-      aria-valuemax={target}
-      aria-valuenow={value}
-    >
+    <span className="score-bar">
+      <span className="visually-hidden">
+        Skill evidence level {value.toFixed(1)} out of {target.toFixed(1)}
+      </span>
       <span aria-hidden="true">
         {"█".repeat(filled)}
         <i>{"░".repeat(segmentCount - filled)}</i>

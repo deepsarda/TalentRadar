@@ -1,5 +1,7 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { getCurrentUser, logout } from "../lib/api";
 
 type Portal = "public" | "participant" | "organizer";
 
@@ -96,6 +98,15 @@ export function TerminalFrame() {
     [portal, location.pathname],
   );
   const [mobileOpen, setMobileOpen] = useState(false);
+  const queryClient = useQueryClient();
+  const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
+  const signOut = useMutation({
+    mutationFn: logout,
+    onSuccess: async () => {
+      queryClient.setQueryData(["current-user"], null);
+      await queryClient.invalidateQueries({ queryKey: ["participant-overview"] });
+    },
+  });
   const [booting, setBooting] = useState(() => {
     if (
       typeof window === "undefined" ||
@@ -114,7 +125,8 @@ export function TerminalFrame() {
   useEffect(() => {
     setMobileOpen(false);
     window.scrollTo({ top: 0, behavior: "auto" });
-    document.title = location.pathname === "/" ? "TalentRadar" : `TalentRadar · ${location.pathname}`;
+    document.title =
+      location.pathname === "/" ? "TalentRadar" : `TalentRadar · ${location.pathname}`;
   }, [location.pathname]);
 
   return (
@@ -148,9 +160,21 @@ export function TerminalFrame() {
               {portal === "organizer" ? "Participant" : "Organizer"}
             </Link>
           ) : null}
-          <Link className="login-link" to="/login">
-            Sign in
-          </Link>
+          {account.data ? (
+            <button
+              className="login-link"
+              type="button"
+              disabled={signOut.isPending}
+              onClick={() => signOut.mutate()}
+              title={`Signed in as ${account.data.login}`}
+            >
+              {signOut.isPending ? "Signing out" : `@${account.data.login} · Sign out`}
+            </button>
+          ) : (
+            <Link className="login-link" to="/login">
+              Sign in
+            </Link>
+          )}
           <button
             className="mobile-menu-button"
             type="button"
@@ -174,7 +198,7 @@ export function TerminalFrame() {
         {navigation.map((item, index) => (
           <NavLink
             className={({ isActive }) => (isActive ? "nav-item nav-item-active" : "nav-item")}
-            end={item.end}
+            {...(item.end === undefined ? {} : { end: item.end })}
             key={item.to}
             to={item.to}
           >
