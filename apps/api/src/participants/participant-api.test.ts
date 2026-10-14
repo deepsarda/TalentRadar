@@ -138,3 +138,25 @@ describe("returning-profile reuse", () => {
     expect(inserted.jobs).toHaveLength(2);
   });
 });
+
+describe("standalone profile build (no event)", () => {
+  it("builds from the repos you pick, with consent, without any application", async () => {
+    const { app, inserted } = setup({ headSha: "c".repeat(40), cvHash: "cv-1" });
+    const response = await request(app)
+      .post("/api/participant/profile/rebuild")
+      .send({ repositories: ["riya/app"], consent: true })
+      .expect(201);
+    expect(response.body.profile).toMatchObject({ version: 2, reused: false });
+    expect(inserted.profiles).toHaveLength(1);
+  });
+
+  it("refuses new repos without consent and writes nothing", async () => {
+    const { app, inserted } = setup({ headSha: "c".repeat(40), cvHash: "cv-1" });
+    await request(app)
+      .post("/api/participant/profile/rebuild")
+      .send({ repositories: ["riya/app"] })
+      .expect(422);
+    expect(inserted.profiles).toHaveLength(0);
+    expect(inserted.jobs).toHaveLength(0);
+  });
+});

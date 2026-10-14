@@ -31,20 +31,20 @@ const GithubRepositorySchema = z.object({
   html_url: z.url(),
   default_branch: z.string().min(1),
   fork: z.boolean(),
-  archived: z.boolean(),
   size: z.number().int().nonnegative(),
   pushed_at: z.iso.datetime({ offset: true }).nullable(),
   language: z.string().nullable(),
 });
 
 const GithubRepositoriesSchema = z.array(GithubRepositorySchema);
+const DetailsSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  college: z.string().trim().min(1).max(200),
+  year: z.string().trim().min(1).max(40),
+  branch: z.string().trim().min(1).max(120),
+});
 const ApplicationSchema = z.object({
-  details: z.object({
-    name: z.string().trim().min(1).max(120),
-    college: z.string().trim().min(1).max(200),
-    year: z.string().trim().min(1).max(40),
-    branch: z.string().trim().min(1).max(120),
-  }),
+  details: DetailsSchema,
   repositories: z
     .array(z.string().regex(/^[^/]+\/[^/]+$/))
     .min(1)
@@ -52,7 +52,39 @@ const ApplicationSchema = z.object({
   consent: z.literal(true),
 });
 
+/** A standalone build (no event): the repos to use, and consent given right then. */
+const ProfileBuildSchema = z
+  .object({
+    repositories: z
+      .array(z.string().regex(/^[^/]+\/[^/]+$/))
+      .min(1)
+      .max(6)
+      .optional(),
+    consent: z.literal(true).optional(),
+  })
+  .refine((body) => !body.repositories || body.consent, {
+    message: "Consent is required to build a profile from new repositories",
+    path: ["consent"],
+  });
+
 const MAX_CV_BYTES = 2 * 1024 * 1024;
+
+/** The participant's confirmed details live on both their account and their scored person. */
+async function saveDetails(
+  db: Db,
+  accountId: ObjectId,
+  personId: ObjectId,
+  details: z.infer<typeof DetailsSchema>,
+  now: Date,
+) {
+  const fields = { ...details, updatedAt: now };
+  await Promise.all([
+    db.collection<UserDocument>(collections.users).updateOne({ _id: accountId }, { $set: fields }),
+    db
+      .collection<PersonDocument>(collections.people)
+      .updateOne({ _id: personId }, { $set: fields }),
+  ]);
+}
 const GITHUB_API_VERSION = "2026-03-10";
 
 interface RepositoryChoice {
@@ -122,9 +154,9 @@ async function githubRepositories(
   const repositories = GithubRepositoriesSchema.parse(await response.json());
   return repositories.map((repository) => {
     const profileReadme = repository.name.toLowerCase() === account.login.toLowerCase();
-    const exclusionReason = repository.archived
-      ? "Archived repository"
-      : repository.size === 0
+    // Archived repos are allowed: finished work is still evidence of skill.
+    const exclusionReason =
+      repository.size === 0
         ? "Empty repository"
         : !repository.pushed_at
           ? "Repository has no push timestamp"
@@ -382,6 +414,24 @@ export function createParticipantApi(
         },
       );
 
+      app.patch("/api/participant/details", async (request, response) => {
+        const account = await currentAccount(authentication, db, request, response);
+        if (!account) return;
+        const parsed = DetailsSchema.safeParse(request.body);
+        if (!parsed.success) {
+          response
+            .status(422)
+            .json({ error: "validation_failed", message: "Every detail is required" });
+          return;
+        }
+        const person = await db
+          .collection<PersonDocument>(collections.people)
+          .findOne({ userId: account._id });
+        if (!person) throw new Error("Verified person record is missing");
+        await saveDetails(db, account._id, person._id, parsed.data, new Date());
+        response.json({ details: parsed.data });
+      });
+
       app.get("/api/participant/overview", async (request, response) => {
         const account = await currentAccount(authentication, db, request, response);
         if (!account) return;
@@ -409,6 +459,9 @@ export function createParticipantApi(
                 .find({ _id: { $in: eventIds } }, { projection: { name: 1, slug: 1 } })
                 .toArray();
         const eventsById = new Map(events.map((event) => [event._id.toHexString(), event]));
+        const cvFile = person.currentCvFileId
+          ? await cvBucket.find({ _id: person.currentCvFileId }).next()
+          : null;
         response.json({
           account: {
             name: account.name,
@@ -417,6 +470,15 @@ export function createParticipantApi(
             ...(account.year ? { year: account.year } : {}),
             ...(account.branch ? { branch: account.branch } : {}),
             hasCv: Boolean(person.currentCvFileId),
+            ...(cvFile
+              ? {
+                  cv: {
+                    name: cvFile.filename,
+                    size: cvFile.length,
+                    uploadedAt: cvFile.uploadDate.toISOString(),
+                  },
+                }
+              : {}),
           },
           profile: profile ? { status: profile.status, version: profile.version } : null,
           applications: registrations.map((registration) => ({
@@ -598,32 +660,7 @@ export function createParticipantApi(
           return;
         }
 
-        await Promise.all([
-          db.collection<UserDocument>(collections.users).updateOne(
-            { _id: account._id },
-            {
-              $set: {
-                name: parsed.data.details.name,
-                college: parsed.data.details.college,
-                year: parsed.data.details.year,
-                branch: parsed.data.details.branch,
-                updatedAt: now,
-              },
-            },
-          ),
-          db.collection<PersonDocument>(collections.people).updateOne(
-            { _id: person._id },
-            {
-              $set: {
-                name: parsed.data.details.name,
-                college: parsed.data.details.college,
-                year: parsed.data.details.year,
-                branch: parsed.data.details.branch,
-                updatedAt: now,
-              },
-            },
-          ),
-        ]);
+        await saveDetails(db, account._id, person._id, parsed.data.details, now);
 
         const registration = await db
           .collection<RegistrationDocument>(collections.registrations)
@@ -672,6 +709,14 @@ export function createParticipantApi(
         const person = await db
           .collection<PersonDocument>(collections.people)
           .findOne({ userId: account._id });
+        const body = ProfileBuildSchema.safeParse(request.body ?? {});
+        if (!body.success) {
+          response.status(422).json({
+            error: "validation_failed",
+            message: body.error.issues[0]?.message ?? "Invalid profile build request",
+          });
+          return;
+        }
         if (!person?.currentCvFileId) {
           response
             .status(422)
@@ -687,7 +732,9 @@ export function createParticipantApi(
             .next(),
           latestProfileOf(person._id),
         ]);
+        // Explicit repos build a profile without any event; otherwise rebuild from the last choice.
         const names =
+          body.data.repositories ??
           latestRegistration?.selectedRepositories ??
           latestProfile?.repos.map((repository) => repository.fullName) ??
           [];
@@ -698,9 +745,16 @@ export function createParticipantApi(
         if (selected.length === 0) {
           response.status(422).json({
             error: "repository_not_eligible",
-            message: "None of your chosen repositories are still available; apply again",
+            message: body.data.repositories
+              ? "None of these repositories are eligible"
+              : "Pick repositories first: none of your earlier choices are still available",
           });
           return;
+        }
+        if (body.data.consent) {
+          await db
+            .collection<PersonDocument>(collections.people)
+            .updateOne({ _id: person._id }, { $set: { profileConsentAt: new Date() } });
         }
         const { profile, reused } = await ensureProfile({
           account,

@@ -45,6 +45,7 @@ import {
   getParticipantTeam,
   getParticipantTeamFit,
   getPublicEvent,
+  getPublicEvents,
   getTeammateSuggestions,
   joinParticipantTeam,
   leaveParticipantTeam,
@@ -55,6 +56,7 @@ import {
   resetParticipantTeamInvite,
   respondParticipantRsvp,
   revokeGithubAccess,
+  saveParticipantDetails,
   setParticipantLookingForTeam,
   submitParticipantApplication,
   submitParticipantTeam,
@@ -101,10 +103,11 @@ function nextStep(
       to: `/participant/applications/${selected.id}`,
     };
   }
-  if (applications.length === 0)
-    return { text: "No applications yet.", label: "Find an event", to: "/" };
+  // A profile needs no event, so it comes first; applying later reuses it.
   if (!profile)
     return { text: "Profile not built.", label: "Build it", to: "/participant/onboarding" };
+  if (applications.length === 0)
+    return { text: "No applications yet.", label: "Find an event", to: "/" };
   if (profile.status === "failed") {
     return { text: "Profile build failed.", label: "See why", to: "/participant/profile" };
   }
@@ -206,7 +209,11 @@ export function ParticipantDashboard() {
 }
 
 export function ParticipantOnboarding() {
-  const { slug } = useParams();
+  const { slug: slugFromLink } = useParams();
+  // Opened from a generic link ("Build it", "Change inputs") there is no event yet; the review
+  // step then asks which open event to apply to.
+  const [chosenSlug, setChosenSlug] = useState("");
+  const slug = slugFromLink ?? (chosenSlug || undefined);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [step, setStep] = useState(0);
@@ -232,6 +239,12 @@ export function ParticipantOnboarding() {
     queryFn: () => getPublicEvent(slug ?? ""),
     enabled: Boolean(slug),
     retry: false,
+  });
+  const openEvents = useQuery({
+    queryKey: ["public-events"],
+    queryFn: getPublicEvents,
+    enabled: !slugFromLink,
+    select: (events) => events.filter((candidate) => candidate.status === "open"),
   });
   const repositories = useQuery({
     queryKey: ["participant-repositories"],
@@ -260,9 +273,40 @@ export function ParticipantOnboarding() {
       await queryClient.invalidateQueries({ queryKey: ["participant-overview"] });
     },
   });
+  const saveDetails = useMutation({
+    mutationFn: saveParticipantDetails,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["participant-overview"] }),
+  });
+  // Returning participants start from the repos their last profile used.
+  const lastProfile = useQuery({
+    queryKey: ["participant-profile"],
+    queryFn: getParticipantProfile,
+    enabled: Boolean(account.data),
+    retry: false,
+  });
+  const [reposPrefilled, setReposPrefilled] = useState(false);
+  useEffect(() => {
+    if (reposPrefilled || !repositories.data || !lastProfile.isFetched) return;
+    setReposPrefilled(true);
+    const eligible = new Set(
+      repositories.data.filter((repo) => repo.eligible).map((repo) => repo.fullName),
+    );
+    const previous = (lastProfile.data?.profile.repos ?? [])
+      .map((repo) => repo.fullName)
+      .filter((fullName) => eligible.has(fullName))
+      .slice(0, 6);
+    if (previous.length > 0) {
+      setSelectedRepositories((current) => (current.length > 0 ? current : previous));
+    }
+  }, [reposPrefilled, repositories.data, lastProfile.isFetched, lastProfile.data]);
+  // With an event this applies (and builds); without one it only builds the profile, which
+  // carries over to later applications.
   const submitApplication = useMutation({
-    mutationFn: () => {
-      if (!slug) throw new Error("Open a published event before submitting an application");
+    mutationFn: async () => {
+      if (!slug) {
+        await rebuildParticipantProfile({ repositories: selectedRepositories, consent: true });
+        return null;
+      }
       return submitParticipantApplication(slug, {
         details,
         repositories: selectedRepositories,
@@ -270,8 +314,13 @@ export function ParticipantOnboarding() {
       });
     },
     onSuccess: async (result) => {
-      await queryClient.invalidateQueries({ queryKey: ["participant-overview"] });
-      navigate(`/participant/applications/${result.application.id}`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["participant-overview"] }),
+        queryClient.invalidateQueries({ queryKey: ["participant-profile"] }),
+      ]);
+      navigate(
+        result ? `/participant/applications/${result.application.id}` : "/participant/profile",
+      );
     },
   });
 
@@ -292,14 +341,23 @@ export function ParticipantOnboarding() {
   };
   const cvHint = (field: DetailField) => (fromCv[field] ? { hint: "from your CV" } : {});
 
+  const storedCv = overview.data?.account.cv;
   const cvReady = Boolean(uploadedCv || overview.data?.account.hasCv);
   const stepValid = [
     cvReady,
     Object.values(details).every((value) => value.trim().length > 0),
     selectedRepositories.length > 0 && selectedRepositories.length <= 6,
-    Boolean(slug) && consented && cvReady && selectedRepositories.length > 0,
+    consented && cvReady && selectedRepositories.length > 0,
   ];
   const lastStep = step === onboardingSteps.length - 1;
+  // Why Apply is disabled, in a few words, so the button never just sits there greyed out.
+  const applyBlocker = !cvReady
+    ? "upload a CV"
+    : selectedRepositories.length === 0
+      ? "pick a repo"
+      : !consented
+        ? "tick the agreement"
+        : null;
 
   const toggleRepository = (fullName: string) => {
     setSelectedRepositories((current) =>
@@ -313,7 +371,7 @@ export function ParticipantOnboarding() {
 
   return (
     <div className="mx-auto grid max-w-2xl gap-10">
-      <ScreenHead title={slug ? `Apply to ${event.data?.name ?? slug}` : "Your profile inputs"} />
+      <ScreenHead title={slug ? `Apply to ${event.data?.name ?? slug}` : "Build your profile"} />
 
       {!account.data && !account.isPending ? (
         <SignInNotice {...(slug ? { returnTo: `/participant/apply/${slug}` } : {})} />
@@ -396,6 +454,15 @@ export function ParticipantOnboarding() {
                 <p>
                   <Status tone="ok">uploaded</Status> {uploadedCv.name}
                 </p>
+              ) : storedCv ? (
+                <p>
+                  <Status tone="ok">on file</Status> {storedCv.name}
+                  <span className="dim">
+                    {" "}
+                    · {Math.max(1, Math.round(storedCv.size / 1024))} KB · uploaded{" "}
+                    {formatDate(storedCv.uploadedAt)}
+                  </span>
+                </p>
               ) : overview.data?.account.hasCv ? (
                 <p>
                   <Status tone="ok">on file</Status>
@@ -472,7 +539,7 @@ export function ParticipantOnboarding() {
                 items={[
                   ["name", details.name || "missing"],
                   ["college", details.college || "missing"],
-                  ["CV", cvReady ? (uploadedCv?.name ?? "on file") : "missing"],
+                  ["CV", cvReady ? (uploadedCv?.name ?? storedCv?.name ?? "on file") : "missing"],
                   [
                     "repos",
                     selectedRepositories.length > 0
@@ -481,6 +548,27 @@ export function ParticipantOnboarding() {
                   ],
                 ]}
               />
+              {slugFromLink ? null : (
+                <Field label="Event" hint="optional">
+                  <SelectInput
+                    value={chosenSlug}
+                    onChange={(change) => setChosenSlug(change.target.value)}
+                  >
+                    <option value="">
+                      {openEvents.isPending
+                        ? "loading…"
+                        : openEvents.data?.length
+                          ? "none — just build my profile"
+                          : "no open events — just build my profile"}
+                    </option>
+                    {openEvents.data?.map((open) => (
+                      <option value={open.slug} key={open.id}>
+                        {open.name}
+                      </option>
+                    ))}
+                  </SelectInput>
+                </Field>
+              )}
               <CheckRow checked={consented} onChange={setConsented} required>
                 I agree to automated evaluation
               </CheckRow>
@@ -497,23 +585,39 @@ export function ParticipantOnboarding() {
             Back
           </ActionButton>
           {lastStep ? (
-            <ActionButton
-              tone="primary"
-              disabled={!stepValid.every(Boolean) || submitApplication.isPending}
-              onClick={() => submitApplication.mutate()}
-            >
-              {submitApplication.isPending ? "Applying…" : "Apply"}
-            </ActionButton>
+            <span className="flex flex-wrap items-center gap-4">
+              {applyBlocker ? <span className="dim">~ {applyBlocker}</span> : null}
+              <ActionButton
+                tone="primary"
+                disabled={!stepValid.every(Boolean) || submitApplication.isPending}
+                onClick={() => submitApplication.mutate()}
+              >
+                {slug
+                  ? submitApplication.isPending
+                    ? "Applying…"
+                    : "Apply"
+                  : submitApplication.isPending
+                    ? "Building…"
+                    : "Build profile"}
+              </ActionButton>
+            </span>
           ) : (
             <ActionButton
               tone="primary"
-              disabled={!stepValid[step]}
-              onClick={() => setStep((value) => Math.min(onboardingSteps.length - 1, value + 1))}
+              disabled={!stepValid[step] || saveDetails.isPending}
+              onClick={() => {
+                const next = () =>
+                  setStep((value) => Math.min(onboardingSteps.length - 1, value + 1));
+                // Details are remembered as soon as they're confirmed, not only when applying.
+                if (step === 1 && account.data) saveDetails.mutate(details, { onSuccess: next });
+                else next();
+              }}
             >
-              Continue
+              {saveDetails.isPending ? "Saving…" : "Continue"}
             </ActionButton>
           )}
         </div>
+        {saveDetails.isError ? <ErrorState message={saveDetails.error.message} /> : null}
         {submitApplication.isError ? (
           <Notice tone="error" tag="error">
             {submitApplication.error.message}

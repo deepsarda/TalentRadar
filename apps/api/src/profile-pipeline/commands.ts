@@ -15,14 +15,18 @@ export function runCommand(
     timeoutMs: number;
     signal?: AbortSignal | undefined;
     env?: NodeJS.ProcessEnv;
+    /** Written to stdin, then closed (e.g. a long path list that won't fit in argv). */
+    input?: string;
   },
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       ...(options.cwd ? { cwd: options.cwd } : {}),
       env: options.env ?? process.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
+    // Closing stdin right away (empty when there's no input) behaves like "ignore".
+    child.stdin.end(options.input ?? "");
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let captured = 0;

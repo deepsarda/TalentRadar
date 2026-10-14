@@ -23,14 +23,13 @@ const GithubRepositorySchema = z.object({
   full_name: z.string().regex(/^[^/]+\/[^/]+$/),
   name: z.string(),
   fork: z.boolean(),
-  archived: z.boolean(),
   size: z.number().int().nonnegative(),
   pushed_at: z.iso.datetime({ offset: true }).nullable(),
 });
 
 /**
- * The spec's repo choice for people nobody signed in for: the 6 most recently pushed non-fork,
- * non-archived public repositories under 50 MB, skipping the profile README repository.
+ * The spec's repo choice for people nobody signed in for: the 6 most recently pushed non-fork
+ * public repositories under 50 MB (archived ones included), skipping the profile README repository.
  */
 export async function selectRecentRepositories(
   login: string,
@@ -62,7 +61,6 @@ export async function selectRecentRepositories(
     .filter(
       (repository) =>
         !repository.fork &&
-        !repository.archived &&
         repository.size > 0 &&
         repository.size <= 51_200 &&
         repository.pushed_at &&

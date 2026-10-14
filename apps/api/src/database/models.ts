@@ -45,6 +45,8 @@ export interface PersonDocument {
   year?: string;
   branch?: string;
   currentCvFileId?: ObjectId;
+  /** Consent to automated evaluation given outside an application (a standalone profile build). */
+  profileConsentAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }

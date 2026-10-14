@@ -22,8 +22,10 @@ const FetchRepositoryPayloadSchema = z.object({
 });
 
 const GithubLanguagesSchema = z.record(z.string(), z.number().int().nonnegative());
+// anon=1 includes commits whose email isn't linked to an account: they have no login but still
+// count toward the total, so authorship isn't overstated.
 const GithubContributorsSchema = z.array(
-  z.object({ login: z.string(), contributions: z.number().int().nonnegative() }),
+  z.object({ login: z.string().nullish(), contributions: z.number().int().nonnegative() }),
 );
 
 const manifestNames = new Set([
@@ -112,13 +114,32 @@ async function readSafeFile(
 ): Promise<string | null> {
   const absolutePath = path.resolve(root, relativePath);
   const canonicalRoot = await realpath(root);
-  const canonicalPath = await realpath(absolutePath);
+  // Paths outside the sparse checkout are tracked but have no file on disk.
+  const canonicalPath = await realpath(absolutePath).catch(() => null);
+  if (!canonicalPath) return null;
   if (!canonicalPath.startsWith(`${canonicalRoot}${path.sep}`)) return null;
   const fileStat = await stat(canonicalPath);
   if (!fileStat.isFile() || fileStat.size > maxBytes) return null;
   const content = await readFile(canonicalPath);
   if (content.includes(0)) return null;
   return content.toString("utf8");
+}
+
+/**
+ * The only paths extraction ever reads (manifests, a top-level README, source files). The clone
+ * fetches just these, so image/data-heavy repos don't blow the clone timeout. Returned as
+ * non-cone sparse-checkout patterns, anchored and with glob characters escaped.
+ */
+export function sparseCheckoutPatterns(trackedPaths: string[]): string[] {
+  return trackedPaths
+    .filter(
+      (file) =>
+        safePath(file) &&
+        (manifestNames.has(path.basename(file).toLowerCase()) ||
+          /^readme(?:\.[^/]+)?$/i.test(file) ||
+          sourceExtensions.has(path.extname(file).toLowerCase())),
+    )
+    .map((file) => `/${file.replace(/[\\*?[\]!#\s]/g, "\\$&")}`);
 }
 
 function sourceScore(filePath: string): number {
@@ -282,7 +303,7 @@ export async function fetchRepository(
   );
   const ownContributions =
     contributors.find(
-      (contributor) => contributor.login.toLowerCase() === input.login.toLowerCase(),
+      (contributor) => contributor.login?.toLowerCase() === input.login.toLowerCase(),
     )?.contributions ?? 0;
   const authorship = totalContributions > 0 ? ownContributions / totalContributions : 0;
   if (input.fork && ownContributions === 0) {
@@ -297,6 +318,7 @@ export async function fetchRepository(
     };
   }
 
+  const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" };
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "talentradar-repo-"));
   const checkout = path.join(temporaryRoot, "checkout");
   try {
@@ -313,14 +335,43 @@ export async function fetchRepository(
         "1",
         "--single-branch",
         "--no-tags",
+        // Trees only: blobs are fetched below for just the files extraction reads.
+        "--filter=blob:none",
+        "--no-checkout",
         `https://github.com/${input.repository}.git`,
         checkout,
       ],
+      { timeoutMs: 120_000, signal, env: gitEnv },
+    );
+    const tracked = await runCommand(
+      "git",
+      ["-C", checkout, "ls-tree", "-r", "-z", "--name-only", "HEAD"],
       {
-        timeoutMs: 120_000,
+        timeoutMs: 20_000,
         signal,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" },
       },
+    );
+    const patterns = sparseCheckoutPatterns(
+      tracked.stdout.toString("utf8").split("\0").filter(Boolean),
+    );
+    await runCommand("git", ["-C", checkout, "sparse-checkout", "set", "--no-cone", "--stdin"], {
+      timeoutMs: 20_000,
+      signal,
+      env: gitEnv,
+      input: `${patterns.join("\n")}\n`,
+    });
+    await runCommand(
+      "git",
+      [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "protocol.file.allow=never",
+        "-C",
+        checkout,
+        "checkout",
+      ],
+      { timeoutMs: 120_000, signal, env: gitEnv },
     );
     const extracted = await extractCheckout(checkout, {
       repoTokenBudget: input.repoTokenBudget,

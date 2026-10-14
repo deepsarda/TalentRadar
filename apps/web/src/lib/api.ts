@@ -180,6 +180,8 @@ export interface ParticipantOverview {
     year?: string;
     branch?: string;
     hasCv: boolean;
+    /** The stored CV in MongoDB GridFS, when there is one. */
+    cv?: { name: string; size: number; uploadedAt: string };
   };
   profile: { status: "pending" | "building" | "ready" | "failed"; version: number } | null;
   applications: Array<{
@@ -589,6 +591,15 @@ export async function updateOrganizerEventConfiguration(
   return response.event;
 }
 
+export async function saveParticipantDetails(details: {
+  name: string;
+  college: string;
+  year: string;
+  branch: string;
+}): Promise<void> {
+  await apiRequest("/api/participant/details", { method: "PATCH", body: JSON.stringify(details) });
+}
+
 export async function getParticipantOverview(): Promise<ParticipantOverview> {
   return apiRequest<ParticipantOverview>("/api/participant/overview");
 }
@@ -638,10 +649,16 @@ export async function uploadParticipantCv(
 }
 
 /** Re-runs the profile build with the current CV and the last chosen repositories. */
-export async function rebuildParticipantProfile(): Promise<{
+/** Rebuild from the last choice, or (with repositories + consent) build without any event. */
+export async function rebuildParticipantProfile(
+  input: { repositories: string[]; consent: true } | Record<string, never> = {},
+): Promise<{
   profile: { id: string; status: string; version: number; reused: boolean };
 }> {
-  return apiRequest("/api/participant/profile/rebuild", { method: "POST" });
+  return apiRequest("/api/participant/profile/rebuild", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 /** Served as a JSON attachment, so a plain link downloads it. */

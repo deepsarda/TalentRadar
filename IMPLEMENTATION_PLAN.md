@@ -498,7 +498,7 @@ Implement the four specification stages without merging responsibilities.
 ### Fetch
 
 - Participant selects up to six public repositories; Quick Shortlist selects the six most recently pushed valid repositories.
-- Skip empty, archived, profile-README, and unchanged forks.
+- Skip empty, profile-README, and unchanged forks. Archived repositories are allowed.
 - Enforce the 50 MB repository metadata limit.
 - Shallow clone with hooks disabled, timeout, symlink/path checks, and guaranteed cleanup.
 - Fetch GitHub languages and contributor authorship.

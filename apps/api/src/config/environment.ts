@@ -59,5 +59,7 @@ const EnvironmentSchema = z
 export type Environment = z.infer<typeof EnvironmentSchema>;
 
 export function readEnvironment(source: NodeJS.ProcessEnv = process.env): Environment {
-  return EnvironmentSchema.parse(source);
+  // `KEY=` in a .env file (as .env.example ships them) means "not set", not "set to empty".
+  const present = Object.fromEntries(Object.entries(source).filter(([, value]) => value !== ""));
+  return EnvironmentSchema.parse(present);
 }

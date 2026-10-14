@@ -12,7 +12,7 @@ const repo = (name: string, overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("selectRecentRepositories", () => {
-  it("keeps the six newest original repositories and skips forks, archives and the README repo", async () => {
+  it("keeps the six newest original repositories, archived included, and skips forks and the README repo", async () => {
     const listing = [
       repo("riya"),
       repo("forked", { fork: true }),
@@ -24,7 +24,7 @@ describe("selectRecentRepositories", () => {
     const fetchListing = (async () => Response.json(listing)) as typeof fetch;
     const selected = await selectRecentRepositories("Riya", "token", fetchListing);
     expect(selected.map((repository) => repository.fullName)).toEqual(
-      ["a", "b", "c", "d", "e", "f"].map((name) => `riya/${name}`),
+      ["old", "a", "b", "c", "d", "e"].map((name) => `riya/${name}`),
     );
   });
 

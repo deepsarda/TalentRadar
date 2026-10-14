@@ -165,7 +165,7 @@ A profile is built in four stages — **fetch, extract, judge, aggregate** — a
 
 **Repos.** The participant picks up to **6 public repos**. Pinned repos are preselected; otherwise the 6 most recently pushed non-fork repos.
 
-- **Skipped automatically:** forks with no commits by the user, archived repos, empty repos, and the `username/username` profile README repo.
+- **Skipped automatically:** forks with no commits by the user, empty repos, and the `username/username` profile README repo. Archived repos are allowed: finished work is still evidence.
 - **Shallow clone, not file-by-file API calls.** `git clone --depth 1` gets the code without spending GitHub's REST API (application programming interface) budget.
 - **Size cap:** repos over 50 MB (from the repo's `size` field) are skipped, with a visible note.
 - **Two API calls per repo:** `languages` (bytes per language) and `contributors` (this user's share of commits).
