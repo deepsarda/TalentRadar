@@ -30,3 +30,16 @@ describe("enqueueJob dedupe", () => {
     await expect(enqueueJob(db, "judge_person", {})).rejects.toThrow("duplicate key");
   });
 });
+
+describe("logReason", () => {
+  it("puts the real error on one line and masks credentials", async () => {
+    const { logReason } = await import("./queue.js");
+    expect(
+      logReason('{"error":{"code":400,\n "message":"Request contains an invalid argument."}}'),
+    ).toBe('{"error":{"code":400, "message":"Request contains an invalid argument."}}');
+    expect(logReason(`auth failed for ghp_${"a".repeat(36)} with Bearer xyz`)).toBe(
+      "auth failed for <github-token> with Bearer <token>",
+    );
+    expect(logReason("x".repeat(500))).toHaveLength(240);
+  });
+});

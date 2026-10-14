@@ -224,6 +224,20 @@ export async function recordFollowUpFailure(db: Db, jobId: ObjectId): Promise<nu
   return job?.followUpFailures ?? 0;
 }
 
+/**
+ * The error as one readable build-log line: the log is the only place a participant or organizer
+ * sees why a build stalls. Credentials never belong in it, so token-shaped strings are masked.
+ */
+export function logReason(error: string): string {
+  const line = error.replace(/\s+/g, " ").trim();
+  const masked = line
+    .replace(/gh[opsu]_[A-Za-z0-9]{20,}/g, "<github-token>")
+    .replace(/AIza[0-9A-Za-z_-]{20,}/g, "<api-key>")
+    .replace(/Bearer\s+\S+/gi, "Bearer <token>")
+    .replace(/mongodb(\+srv)?:\/\/\S+/g, "<database-url>");
+  return masked.length > 240 ? `${masked.slice(0, 239)}…` : masked || "unknown error";
+}
+
 export async function failJob(
   db: Db,
   job: ClaimedJob,
@@ -238,8 +252,8 @@ export async function failJob(
     at: now,
     code: terminal ? "job.failed" : "job.retry_scheduled",
     message: terminal
-      ? "Job failed after all attempts"
-      : "Job will retry after a recoverable failure",
+      ? `Failed after ${job.attempts} attempts: ${logReason(error)}`
+      : `Retry ${job.attempts + 1}/${job.maxAttempts} in ${Math.ceil(delayMs / 1000)}s: ${logReason(error)}`,
   };
   const result = await db.collection<JobDocument>(collections.jobs).updateOne(
     { _id: job._id, status: "running", lockedBy: workerId },

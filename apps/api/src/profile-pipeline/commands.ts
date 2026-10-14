@@ -25,8 +25,12 @@ export function runCommand(
       env: options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    // Closing stdin right away (empty when there's no input) behaves like "ignore".
-    child.stdin.end(options.input ?? "");
+    // A command that exits before reading stdin (or never reads it) makes our write fail with
+    // EPIPE. Unhandled, that error crashes the whole process, so it is ignored here: the exit
+    // code below still reports whether the command itself succeeded.
+    child.stdin.on("error", () => undefined);
+    if (options.input === undefined) child.stdin.destroy();
+    else child.stdin.end(options.input);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let captured = 0;

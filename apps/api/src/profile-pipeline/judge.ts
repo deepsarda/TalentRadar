@@ -136,7 +136,10 @@ export function responseSchema() {
                 propertyOrdering: ["id", "evidence", "thought", "level"],
                 required: ["id", "evidence", "thought", "level"],
                 properties: {
-                  id: { type: "string", enum: taxonomyIds },
+                  // No enum: Gemini rejects a 241-value enum with 400 INVALID_ARGUMENT (tested with
+                  // gemini-3.1-flash-lite). The taxonomy is listed in the prompt instead and
+                  // sanitizeResponse drops any id outside it (spec's planned fallback).
+                  id: { type: "string" },
                   evidence: {
                     type: "array",
                     items: {
@@ -169,7 +172,8 @@ export function responseSchema() {
               propertyOrdering: ["id", "quote", "thought", "level"],
               required: ["id", "quote", "thought", "level"],
               properties: {
-                id: { type: "string", enum: taxonomyIds },
+                // No enum, for the same reason as repo skills above.
+                id: { type: "string" },
                 quote: { type: "string" },
                 thought: { type: "string" },
                 level: { type: "integer", minimum: 1, maximum: 5 },

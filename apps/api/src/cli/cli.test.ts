@@ -56,16 +56,11 @@ describe("pnpm profile", () => {
     expect(await runProfileCli([checkout], {}, out.log)).toBe(2);
   });
 
-  it("names the missing credentials for a login", async () => {
+  it("stops before any network call when GEMINI_API_KEY is missing (GITHUB_TOKEN is optional)", async () => {
     const out = capture();
     expect(await runProfileCli(["octo-student"], {}, out.log)).toBe(1);
-    expect(out.text()).toContain("GITHUB_TOKEN");
     expect(out.text()).toContain("GEMINI_API_KEY");
-
-    const dry = capture();
-    expect(await runProfileCli(["--dry-run", "octo-student"], {}, dry.log)).toBe(1);
-    expect(dry.text()).toContain("GITHUB_TOKEN");
-    expect(dry.text()).not.toContain("GEMINI_API_KEY");
+    expect(out.text()).not.toContain("Missing GITHUB_TOKEN");
   });
 });
 

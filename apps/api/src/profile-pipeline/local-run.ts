@@ -32,7 +32,7 @@ const progressTo = (log: Log) => async (_code: string, message: string) => log(`
 /** Stages 1-2 for a login: the spec's six most recent eligible repositories, cloned and extracted. */
 export async function collectRepositories(options: {
   login: string;
-  githubToken: string;
+  githubToken: string | undefined;
   repoTokenBudget: number;
   log: Log;
   signal?: AbortSignal;

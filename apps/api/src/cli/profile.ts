@@ -18,7 +18,7 @@ const usage = `Usage: pnpm profile <github-login> [--cv <synthetic-cv.pdf>]
 
 Runs fetch -> extract -> judge -> aggregate for one person and prints the profile with evidence.
 --dry-run stops after extraction (no model call) and prints the facts and sampled files.
-Needs GITHUB_TOKEN for a login, and GEMINI_API_KEY unless --dry-run. Free-tier Gemini: synthetic CVs only.`;
+GITHUB_TOKEN is optional (public repos; it raises the rate limit). GEMINI_API_KEY is needed unless --dry-run. Free-tier Gemini: synthetic CVs only.`;
 
 const LOGIN_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 
@@ -75,13 +75,12 @@ export async function runProfileCli(
     return 2;
   }
   const githubToken = env["GITHUB_TOKEN"];
-  const missing = [
-    ...(githubToken ? [] : ["GITHUB_TOKEN (a GitHub token that can read public repos)"]),
-    ...(dryRun || environment.GEMINI_API_KEY ? [] : ["GEMINI_API_KEY"]),
-  ];
-  if (missing.length > 0 || !githubToken) {
-    log(`Missing ${missing.join(" and ")}. Set it in the environment or in .env at the repo root.`);
+  if (!dryRun && !environment.GEMINI_API_KEY) {
+    log("Missing GEMINI_API_KEY. Set it in the environment or in .env at the repo root.");
     return 1;
+  }
+  if (!githubToken) {
+    log("No GITHUB_TOKEN: reading public repos unauthenticated (GitHub allows 60 requests/hour).");
   }
 
   try {

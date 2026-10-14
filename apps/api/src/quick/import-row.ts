@@ -33,7 +33,8 @@ const GithubRepositorySchema = z.object({
  */
 export async function selectRecentRepositories(
   login: string,
-  token: string,
+  // Public data needs no token; one only raises GitHub's limit from 60 to 5,000 requests/hour.
+  token: string | undefined,
   fetchImplementation: typeof fetch = githubFetch,
 ): Promise<Array<{ fullName: string; pushedAt: string; fork: boolean }>> {
   const response = await fetchImplementation(
@@ -41,7 +42,7 @@ export async function selectRecentRepositories(
     {
       headers: {
         accept: "application/vnd.github+json",
-        authorization: `Bearer ${token}`,
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
         "x-github-api-version": "2026-03-10",
       },
     },
