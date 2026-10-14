@@ -415,7 +415,7 @@ export async function judgeProfile(
       ],
       config: {
         temperature: 0,
-        maxOutputTokens: 16_000,
+        maxOutputTokens: 65_536,
         thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
         responseMimeType: "application/json",
         responseJsonSchema: responseSchema(),

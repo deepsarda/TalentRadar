@@ -43,6 +43,7 @@ describe("aggregateProfile", () => {
     };
 
     const profile = aggregateProfile("riya", "Riya", judgment, new Date("2026-10-13T00:00:00Z"));
+    expect(profile.summary).toBe("ML student");
     expect(profile.skills[0]).toMatchObject({
       id: "pytorch",
       level: 3.18,

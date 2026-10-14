@@ -1039,9 +1039,8 @@ function Inspector({
         <Details summary="members" meta={team.members.length}>
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {team.members.map((member) => {
-              const flags = [
-                ...new Set([...member.flags, ...(profileById.get(member.personId)?.flags ?? [])]),
-              ];
+              const profile = profileById.get(member.personId);
+              const flags = [...new Set([...member.flags, ...(profile?.flags ?? [])])];
               return (
                 <li className="grid content-start" key={member.personId}>
                   <span className="flex flex-wrap items-baseline gap-x-[1ch]">
@@ -1055,6 +1054,7 @@ function Inspector({
                     )}
                   </span>
                   <span className="dim text-xs">{member.college ?? "No college"}</span>
+                  {profile?.summary ? <p className="mt-1 text-sm">{profile.summary}</p> : null}
                   {flags.length > 0 ? (
                     <span className="flex flex-wrap gap-x-[1ch]">
                       {flags.map((flag) => (

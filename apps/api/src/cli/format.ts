@@ -78,6 +78,7 @@ export function formatProfile(
   }
   lines.push(
     "",
+    ...(profile.summary ? [`Summary: ${profile.summary}`] : []),
     `Novelty: ${profile.novelty}`,
     `Flags: ${profile.flags.length > 0 ? profile.flags.join(", ") : "none"}`,
   );

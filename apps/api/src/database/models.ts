@@ -200,6 +200,7 @@ export interface ShortlistRunPersonSnapshot {
     skills: PersonProfile["skills"];
     novelty: number;
     flags: PersonProfile["flags"];
+    summary?: string;
     repos: ProfileDocument["repos"];
     taxonomyVersion: string;
     promptVersion?: string;

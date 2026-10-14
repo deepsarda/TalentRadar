@@ -181,6 +181,7 @@ async function loadShortlistInput(db: Db, event: HackathonDocument): Promise<Sho
         skills: profile.skills,
         novelty: profile.novelty,
         flags: profile.flags,
+        ...(profile.summary ? { summary: profile.summary } : {}),
       }),
     );
   const rankingTeams = teamDocuments.flatMap((team): Team[] =>
@@ -234,6 +235,7 @@ async function loadShortlistInput(db: Db, event: HackathonDocument): Promise<Sho
                   skills: ready.skills,
                   novelty: ready.novelty,
                   flags: ready.flags,
+                  ...(ready.summary ? { summary: ready.summary } : {}),
                   repos: ready.repos,
                   taxonomyVersion: ready.taxonomyVersion,
                   ...(assessment?.promptVersion ? { promptVersion: assessment.promptVersion } : {}),

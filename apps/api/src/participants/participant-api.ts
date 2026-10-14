@@ -480,7 +480,17 @@ export function createParticipantApi(
                 }
               : {}),
           },
-          profile: profile ? { status: profile.status, version: profile.version } : null,
+          profile: profile
+            ? {
+                status: profile.status,
+                version: profile.version,
+                ...(profile.summary ? { summary: profile.summary } : {}),
+                // Strongest first; the overview shows the top few areas and tools.
+                skills: [...profile.skills]
+                  .sort((left, right) => right.effective - left.effective)
+                  .map(({ id, level, effective }) => ({ id, level, effective })),
+              }
+            : null,
           applications: registrations.map((registration) => ({
             id: registration._id.toHexString(),
             eventId: registration.hackathonId.toHexString(),
@@ -527,6 +537,7 @@ export function createParticipantApi(
             skills: profile.skills,
             novelty: profile.novelty,
             flags: profile.flags,
+            summary: profile.summary,
             taxonomyVersion: profile.taxonomyVersion,
             builtAt: profile.builtAt?.toISOString(),
             error: profile.error,

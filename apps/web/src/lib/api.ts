@@ -183,7 +183,13 @@ export interface ParticipantOverview {
     /** The stored CV in MongoDB GridFS, when there is one. */
     cv?: { name: string; size: number; uploadedAt: string };
   };
-  profile: { status: "pending" | "building" | "ready" | "failed"; version: number } | null;
+  profile: {
+    status: "pending" | "building" | "ready" | "failed";
+    version: number;
+    summary?: string;
+    /** Strongest first. */
+    skills: Array<{ id: string; level: number; effective: number }>;
+  } | null;
   applications: Array<{
     id: string;
     eventId: string;
@@ -212,6 +218,7 @@ export interface ParticipantProfileResponse {
     skills: ProfileSkill[];
     novelty: number;
     flags: string[];
+    summary?: string;
     taxonomyVersion: string;
     builtAt?: string;
     error?: string;
@@ -358,6 +365,7 @@ export interface ShortlistRunPerson {
     skills: ProfileSkill[];
     novelty: number;
     flags: PersonProfile["flags"];
+    summary?: string;
     taxonomyVersion: string;
     promptVersion?: string;
     model?: string;

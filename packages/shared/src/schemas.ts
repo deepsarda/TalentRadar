@@ -30,6 +30,8 @@ export const PersonProfileSchema = z.object({
   flags: z
     .array(z.enum(["possible_prompt_injection", "readme_overclaims", "mostly_boilerplate"]))
     .default([]),
+  /** The model's one-paragraph read of the person; absent on profiles built before it was kept. */
+  summary: z.string().max(600).optional(),
 });
 
 export const TeamSchema = z.object({

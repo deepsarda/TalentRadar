@@ -1024,16 +1024,21 @@
     cursor: pointer;
   }
 
-  .tui-list > button:hover,
-  .tui-list > a:hover {
+  /* Selected rows keep their accent fill on hover/focus: their text is --bg, which vanishes on --raised. */
+  .tui-list > button:not([aria-selected="true"], [aria-current="true"]):hover,
+  .tui-list > a:not([aria-selected="true"], [aria-current="true"]):hover {
     background: var(--raised);
   }
 
   .tui-list > button:focus-visible,
   .tui-list > a:focus-visible {
     outline: none;
-    background: var(--raised);
     box-shadow: inset 2px 0 0 var(--accent);
+  }
+
+  .tui-list > button:not([aria-selected="true"], [aria-current="true"]):focus-visible,
+  .tui-list > a:not([aria-selected="true"], [aria-current="true"]):focus-visible {
+    background: var(--raised);
   }
 
   .tui-list > [aria-selected="true"],
@@ -1054,6 +1059,11 @@
 
   .tui-list > [aria-selected="true"] .marker {
     color: var(--bg);
+  }
+
+  .tui-list > [aria-selected="true"]:focus-visible,
+  .tui-list > [aria-current="true"]:focus-visible {
+    box-shadow: inset 2px 0 0 var(--bg);
   }
 
   /* ------------------------------------------------------- score / meters */

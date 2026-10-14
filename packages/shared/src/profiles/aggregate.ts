@@ -154,6 +154,7 @@ export function aggregateProfile(
     ),
     novelty,
     flags: judgment.flags,
+    summary: judgment.summary,
   };
 }
 

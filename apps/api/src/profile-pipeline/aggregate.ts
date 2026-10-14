@@ -45,6 +45,7 @@ export function createAggregateProfileHandler(db: Db) {
           skills: aggregated.skills,
           novelty: aggregated.novelty,
           flags: aggregated.flags,
+          ...(aggregated.summary ? { summary: aggregated.summary } : {}),
           builtAt: now,
           updatedAt: now,
         },

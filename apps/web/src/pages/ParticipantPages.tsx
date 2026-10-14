@@ -192,6 +192,27 @@ export function ParticipantDashboard() {
       {overview.data ? (
         <section className="grid gap-2">
           <SectionLabel>profile</SectionLabel>
+          {profile?.summary ? (
+            <p className="max-w-[72ch] text-lg leading-snug">{profile.summary}</p>
+          ) : null}
+          {profile && profile.skills.length > 0 ? (
+            <div className="grid gap-6 py-2 sm:grid-cols-2">
+              {splitSkills(profile.skills, (skill) => skill.id).map((group) => (
+                <div className="grid content-start gap-1" key={group.label}>
+                  <p className="dim text-sm">top {group.label}</p>
+                  {group.items.slice(0, group.label === "areas" ? 3 : 5).map((skill) => (
+                    <p
+                      className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-[1ch]"
+                      key={skill.id}
+                    >
+                      <span className="truncate">{skillLabel(skill.id)}</span>
+                      <Bar value={skill.level} cells={6} label={skillLabel(skill.id)} />
+                    </p>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : null}
           <Link
             className={`-mx-3 ${rowClass}`}
             to={profile ? "/participant/profile" : "/participant/onboarding"}
@@ -662,6 +683,14 @@ export function ParticipantProfilePage() {
       post(result.profile.reused ? "CV unchanged." : "Rebuilding profile.");
     },
   });
+  // Same repositories and CV; a failed profile is never reused, so this always starts a new build.
+  const rebuild = useMutation({
+    mutationFn: () => rebuildParticipantProfile(),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["participant-profile"] });
+      post("Rebuilding profile.");
+    },
+  });
   const profile = useQuery({
     queryKey: ["participant-profile"],
     queryFn: getParticipantProfile,
@@ -759,6 +788,15 @@ export function ParticipantProfilePage() {
                 event.target.value = "";
               }}
             />
+            {data.status === "failed" ? (
+              <ActionButton
+                tone="primary"
+                disabled={rebuild.isPending}
+                onClick={() => rebuild.mutate()}
+              >
+                {rebuild.isPending ? "Starting…" : "Rebuild"}
+              </ActionButton>
+            ) : null}
             <ActionButton
               disabled={replaceCv.isPending || live}
               onClick={() => cvInputRef.current?.click()}
@@ -769,9 +807,10 @@ export function ParticipantProfilePage() {
           </div>
         }
       />
-      {replaceCv.isError ? (
+      {data.summary ? <p className="max-w-[72ch] text-lg leading-snug">{data.summary}</p> : null}
+      {replaceCv.isError || rebuild.isError ? (
         <Notice tone="error" tag="error">
-          {replaceCv.error.message}
+          {(replaceCv.error ?? rebuild.error)?.message}
         </Notice>
       ) : null}
 
