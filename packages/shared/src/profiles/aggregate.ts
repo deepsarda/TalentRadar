@@ -41,7 +41,7 @@ export const RepositorySkillJudgmentSchema = z
     level: z.number().int().min(0).max(5),
   })
   .superRefine((skill, context) => {
-    const noEvidenceDomain = skill.id in taxonomy.domains && skill.level === 0;
+    const noEvidenceDomain = Object.hasOwn(taxonomy.domains, skill.id) && skill.level === 0;
     if (
       noEvidenceDomain
         ? skill.evidence.length > 0
@@ -170,10 +170,11 @@ export function aggregateProfile(
       confidence,
       effective: round(level * confidenceFactors[confidence]),
       evidence,
-      thought:
+      thought: (
         contributions.map((contribution) => contribution.skill.thought).join(" ") ||
         claim?.thought ||
-        (skillId in taxonomy.domains ? "No evidence for this domain in the reviewed inputs." : ""),
+        (skillId in taxonomy.domains ? "No evidence for this domain in the reviewed inputs." : "")
+      ).slice(0, 600),
     };
   });
 

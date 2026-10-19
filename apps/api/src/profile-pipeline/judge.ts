@@ -431,7 +431,7 @@ export function sanitizeResponse(
     };
     const skills = parsed.data.skills.flatMap((skillCandidate) => {
       const skill = RawSkillSchema.safeParse(skillCandidate);
-      if (!skill.success || !(skill.data.id in taxonomy.technologies)) return [];
+      if (!skill.success || !Object.hasOwn(taxonomy.technologies, skill.data.id)) return [];
       const evidence = skill.data.evidence.flatMap((item) => {
         const path = citable(item.path);
         return path ? [{ ...item, path }] : [];

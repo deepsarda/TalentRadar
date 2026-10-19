@@ -88,6 +88,9 @@ describe("aggregateProfile", () => {
     }
     expect(PersonProfileSchema.safeParse(profile).success).toBe(true);
     expect(ProfileSkillSchema.safeParse({ ...profile.skills[0], id: "react" }).success).toBe(false);
+    expect(ProfileSkillSchema.safeParse({ ...profile.skills[0], id: "constructor" }).success).toBe(
+      false,
+    );
   });
 
   it("does not dilute a positive domain score or raise confidence with no-evidence repositories", () => {
@@ -126,6 +129,34 @@ describe("aggregateProfile", () => {
       effective: 3.4,
     });
   });
+});
+
+it("keeps combined domain explanations within the participant profile contract", () => {
+  const profile = aggregateProfile("person", "Person", {
+    thoughts: "",
+    summary: "Backend work",
+    cv: { claims: [] },
+    flags: [],
+    repos: ["api", "service"].map((name) => ({
+      repo: `person/${name}`,
+      commitSha: "a123456",
+      pushedAt: "2026-10-01T00:00:00Z",
+      authorship: 1,
+      originality: 4,
+      skills: [
+        {
+          id: "backend",
+          evidence: [{ path: "server.ts", note: "Service implementation" }],
+          thought: "Architecture and tested error handling. ".repeat(12),
+          level: 4,
+        },
+      ],
+    })),
+  });
+  expect(
+    profile.skills.find((skill) => skill.id === "backend")?.thought.length,
+  ).toBeLessThanOrEqual(600);
+  expect(PersonProfileSchema.safeParse(profile).success).toBe(true);
 });
 
 describe("withDetectedTools", () => {

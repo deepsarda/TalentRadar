@@ -24,7 +24,12 @@ export const ProfileSkillSchema = z
     thought: z.string().max(600).default(""),
   })
   .superRefine((skill, context) => {
-    if (skill.level === 0 && !(skill.id in taxonomy.domains)) {
+    if (
+      skill.level === 0 &&
+      (!Object.hasOwn(taxonomy.domains, skill.id) ||
+        skill.evidence.length > 0 ||
+        skill.effective !== 0)
+    ) {
       context.addIssue({
         code: "custom",
         path: ["level"],
