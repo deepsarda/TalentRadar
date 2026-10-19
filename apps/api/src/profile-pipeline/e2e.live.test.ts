@@ -15,7 +15,7 @@ import { collectRepositories, judgeAndAggregate, prepareCv } from "./local-run.j
  * What it checks, stage by stage:
  *  1. Fetch: at most 6 repos are selected for the login, each either included or skipped with a
  *     reason; included repos carry a 40-hex commit SHA, an authorship share in 0..1 and a push date.
- *  2. Sampling: at most 8 files per repo, within the repoTokenBudget character budget (4 chars per
+ *  2. Sampling: at most 20 files per repo, within the repoTokenBudget character budget (4 chars per
  *     token), none from node_modules/dist/build/vendor or lock/minified files, and every technology
  *     hint a taxonomy id.
  *  3. CV render (only with E2E_CV_PDF): 1-3 pages rendered to PNG (checked by PNG signature),
@@ -65,7 +65,7 @@ describe.skipIf(!ready)("end-to-end pipeline (live)", () => {
     for (const repository of repositories) {
       if (!repository.included) continue;
       const characters = repository.selectedFiles.reduce((sum, f) => sum + f.content.length, 0);
-      expect(repository.selectedFiles.length).toBeLessThanOrEqual(8);
+      expect(repository.selectedFiles.length).toBeLessThanOrEqual(20);
       expect(characters).toBeLessThanOrEqual(repoTokenBudget * 4);
       for (const file of repository.selectedFiles) {
         expect(file.path).not.toMatch(
@@ -112,6 +112,16 @@ describe.skipIf(!ready)("end-to-end pipeline (live)", () => {
                 new Set([
                   ...repository.selectedFiles.map((file) => file.path),
                   ...(repository.readmePath ? [repository.readmePath] : []),
+                  ...repository.tree,
+                  ...[
+                    ...repository.tree,
+                    ...repository.selectedFiles.map((file) => file.path),
+                  ].flatMap((file) => {
+                    const segments = file.split("/");
+                    return segments
+                      .slice(0, -1)
+                      .map((_, index) => `${segments.slice(0, index + 1).join("/")}/`);
+                  }),
                 ]),
               ] as const,
             ]

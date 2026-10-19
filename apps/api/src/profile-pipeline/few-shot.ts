@@ -1,7 +1,7 @@
 import type { RawJudgeResponse, RepositoryPromptInput } from "./judge.js";
 
 /*
- * The five few-shot examples in the judge's fixed prompt prefix (spec: Stage 3, few-shot table).
+ * Calibration and technology-coverage examples in the judge's fixed prompt prefix.
  * Every repository, owner and line of code here is SYNTHETIC, written for the prompt. None is a real
  * person or project, and none may be reused in the calibration set (calibration/README.md).
  * Each shot is one participant with one repository and no CV, in exactly the input shape the
@@ -1197,10 +1197,325 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   },
 };
 
+const stackCoverage: FewShot = {
+  teaches:
+    "Stack coverage: report secondary tools and areas; distinguish usage from dependency-only evidence",
+  input: {
+    repository: "example-user-6/community-board",
+    facts: {
+      languages: { TypeScript: 18000, Python: 400, CSS: 180, HCL: 80 },
+      authorship: 0.8,
+      hasTests: false,
+      hasCi: true,
+      containerized: true,
+      technologyHints: [
+        { id: "react", reasons: ["npm:react"] },
+        { id: "vite", reasons: ["npm:vite"] },
+        { id: "express", reasons: ["npm:express"] },
+        { id: "mongodb", reasons: ["npm:mongodb"] },
+        { id: "pytorch", reasons: ["pip:torch"] },
+        { id: "docker", reasons: ["file:Dockerfile"] },
+      ],
+    },
+    readmePath: "README.md",
+    readme:
+      "A community notice board with a React client and a Node API. A Python script summarizes daily views. Deployment files are included; there are no tests yet.",
+    tree: [
+      "README.md",
+      "package.json",
+      "web/src/App.tsx",
+      "web/src/site.css",
+      "api/server.ts",
+      "scripts/views.py",
+      "requirements.txt",
+      "Dockerfile",
+      ".github/workflows/ci.yml",
+      "infra/main.tf",
+    ],
+    files: [
+      {
+        path: "package.json",
+        content:
+          '{"scripts":{"build":"vite build"},"dependencies":{"react":"19.0.0","react-dom":"19.0.0","express":"5.0.0","mongodb":"7.0.0"},"devDependencies":{"vite":"7.0.0","typescript":"5.0.0"}}',
+      },
+      {
+        path: "web/src/App.tsx",
+        content: `import { useEffect, useState } from "react";
+import "./site.css";
+type Notice = { title: string };
+export function App() {
+  const [items, setItems] = useState<Notice[]>([]);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    fetch("/notices").then(r => {
+      if (!r.ok) throw new Error("Could not load notices");
+      return r.json();
+    }).then(setItems).catch(e => setError(e.message));
+  }, []);
+  return <main><h1>Notices</h1>{error && <p role="alert">{error}</p>}
+    <ul>{items.map(n => <li key={n.title}>{n.title}</li>)}</ul></main>;
+}`,
+      },
+      {
+        path: "web/src/site.css",
+        content:
+          "main { max-width: 60rem; margin: auto; padding: 1rem; }\n@media (max-width: 40rem) { h1 { font-size: 1.5rem; } }",
+      },
+      {
+        path: "api/server.ts",
+        content: `import express from "express";
+import { MongoClient } from "mongodb";
+const client = new MongoClient(process.env.MONGODB_URI!);
+await client.connect();
+const app = express();
+app.get("/notices", async (_req, res, next) => {
+  try { res.json(await client.db().collection("notices").find({}).limit(100).toArray()); }
+  catch (error) { next(error); }
+});
+app.listen(3000);`,
+      },
+      {
+        path: "scripts/views.py",
+        content:
+          'import numpy as np\nviews = np.loadtxt("daily-views.csv", delimiter=",")\nprint(float(np.percentile(views, 90)))\n',
+      },
+      { path: "requirements.txt", content: "numpy==2.0.0\ntorch==2.0.0\n" },
+      {
+        path: "Dockerfile",
+        content:
+          'FROM node:24\nWORKDIR /app\nCOPY . .\nRUN npm ci && npm run build\nCMD ["node", "dist/server.js"]\n',
+      },
+      {
+        path: ".github/workflows/ci.yml",
+        content:
+          "name: Build\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with:\n          node-version: 24\n      - run: npm ci && npm run build\n",
+      },
+      {
+        path: "infra/main.tf",
+        content: 'resource "aws_s3_bucket" "reports" {\n  bucket = "community-board-reports"\n}\n',
+      },
+    ],
+  },
+  expected: {
+    thoughts:
+      "The main web app demonstrates React, TypeScript, Express and MongoDB. Small Python, CSS and delivery files add supported tools and areas. Torch is declared but unused in the supplied code, so it shows exposure only, not model engineering.",
+    summary:
+      "Working web developer with a small data script and basic delivery configuration; no tests or advanced AI implementation shown.",
+    repos: [
+      {
+        repo: "example-user-6/community-board",
+        thoughts:
+          "An independently assembled notice board using familiar web patterns. The code supports an original application, not a novel algorithm. The secondary files count as evidence even though the TypeScript implementation is much larger.",
+        originality: 4,
+        skills: [
+          {
+            id: "react",
+            evidence: [
+              {
+                path: "web/src/App.tsx",
+                note: "React state and an effect load notices and display errors",
+              },
+            ],
+            thought:
+              "A working component with state, fetching and an error state; limited structure and no tests shown.",
+            level: 2,
+          },
+          {
+            id: "typescript",
+            evidence: [
+              { path: "web/src/App.tsx", note: "Notice type and typed React state" },
+              { path: "api/server.ts", note: "Typed service entry point" },
+            ],
+            thought: "Basic types across client and server, without advanced typing or tests.",
+            level: 2,
+          },
+          {
+            id: "css",
+            evidence: [
+              { path: "web/src/site.css", note: "Layout rules and a responsive media query" },
+            ],
+            thought:
+              "Small but direct stylesheet implementation; its size does not justify omitting CSS.",
+            level: 2,
+          },
+          {
+            id: "vite",
+            evidence: [{ path: "package.json", note: "Vite dependency and a vite build script" }],
+            thought:
+              "Declared build tool with a runnable script; no custom Vite configuration was supplied.",
+            level: 1,
+          },
+          {
+            id: "nodejs",
+            evidence: [
+              {
+                path: "api/server.ts",
+                note: "Node service reads environment configuration, connects to MongoDB and listens on port 3000",
+              },
+            ],
+            thought: "A small independent Node service; no lifecycle management or tests shown.",
+            level: 2,
+          },
+          {
+            id: "express",
+            evidence: [
+              {
+                path: "api/server.ts",
+                note: "GET route forwards asynchronous errors to Express middleware",
+              },
+            ],
+            thought: "Direct Express usage, limited to one read endpoint.",
+            level: 2,
+          },
+          {
+            id: "mongodb",
+            evidence: [
+              {
+                path: "api/server.ts",
+                note: "MongoClient connection and a bounded collection query",
+              },
+            ],
+            thought:
+              "Direct driver usage for a simple read; no indexes, schema design or transactions shown.",
+            level: 2,
+          },
+          {
+            id: "rest_api",
+            evidence: [
+              { path: "api/server.ts", note: "A JSON collection endpoint at GET /notices" },
+            ],
+            thought: "A basic resource endpoint, without a broader API contract or tests.",
+            level: 2,
+          },
+          {
+            id: "python",
+            evidence: [
+              { path: "scripts/views.py", note: "Loads daily views and prints a percentile" },
+            ],
+            thought: "Small executable analysis script, with little structure or error handling.",
+            level: 2,
+          },
+          {
+            id: "numpy",
+            evidence: [
+              {
+                path: "scripts/views.py",
+                note: "np.loadtxt and np.percentile operate on the views data",
+              },
+            ],
+            thought: "Direct numerical-library usage; not just an installed dependency.",
+            level: 2,
+          },
+          {
+            id: "pytorch",
+            evidence: [
+              {
+                path: "requirements.txt",
+                note: "torch is declared; no supplied file imports or uses it",
+              },
+            ],
+            thought:
+              "Declared presence only. No training, inference, tensors or evaluation work is visible.",
+            level: 1,
+          },
+          {
+            id: "docker",
+            evidence: [
+              {
+                path: "Dockerfile",
+                note: "Node base image, install/build steps and a startup command",
+              },
+            ],
+            thought:
+              "Basic container packaging is visible; build success and deployment are unverified.",
+            level: 2,
+          },
+          {
+            id: "github_actions",
+            evidence: [
+              {
+                path: ".github/workflows/ci.yml",
+                note: "Checkout, Node setup and an install/build job on push",
+              },
+            ],
+            thought: "Basic build automation, without test jobs or evidence of a successful run.",
+            level: 2,
+          },
+          {
+            id: "terraform",
+            evidence: [{ path: "infra/main.tf", note: "Declares an AWS S3 bucket resource" }],
+            thought:
+              "One infrastructure resource shows basic Terraform exposure; provisioning is unverified.",
+            level: 1,
+          },
+          {
+            id: "aws",
+            evidence: [
+              {
+                path: "infra/main.tf",
+                note: "AWS S3 bucket resource, not evidence of a live bucket",
+              },
+            ],
+            thought: "A concrete AWS resource declaration, without operational evidence.",
+            level: 1,
+          },
+          {
+            id: "frontend",
+            evidence: [
+              {
+                path: "web/src/App.tsx",
+                note: "Browser data fetching, rendered notices and an error state",
+              },
+              { path: "web/src/site.css", note: "Responsive layout" },
+            ],
+            thought: "An independent interface with a small amount of state and styling.",
+            level: 2,
+          },
+          {
+            id: "backend",
+            evidence: [
+              { path: "api/server.ts", note: "Database-backed HTTP service with error forwarding" },
+            ],
+            thought: "Working backend integration, with limited visible depth.",
+            level: 2,
+          },
+          {
+            id: "data",
+            evidence: [
+              {
+                path: "scripts/views.py",
+                note: "Loads numeric observations and computes their 90th percentile",
+              },
+            ],
+            thought:
+              "The analysis script supports a small amount of data work despite being secondary to the web app.",
+            level: 2,
+          },
+          {
+            id: "devops_cloud",
+            evidence: [
+              { path: "Dockerfile", note: "Container packaging" },
+              { path: ".github/workflows/ci.yml", note: "Build automation" },
+              { path: "infra/main.tf", note: "Cloud resource declaration" },
+            ],
+            thought:
+              "Basic packaging, CI and infrastructure configuration. No operational or production reliability evidence.",
+            level: 2,
+          },
+        ],
+        flags: [],
+      },
+    ],
+    cv: { claims: [] },
+    flags: [],
+  },
+};
+
 export const fewShots: readonly FewShot[] = [
   tutorialClone,
   solidApp,
   novelProject,
   overclaimingReadme,
   injectionAttempt,
+  stackCoverage,
 ];

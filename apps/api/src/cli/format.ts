@@ -39,11 +39,15 @@ export function formatFacts(repository: FactsView): string[] {
     `  last push   ${repository.pushedAt ?? unknown}`,
     `  tests ${repository.hasTests ? "yes" : "no"} · CI ${repository.hasCi ? "yes" : "no"} · containerized ${repository.containerized ? "yes" : "no"}`,
     `  readme      ${repository.readmePath ?? "(none)"}`,
-    `  tree        ${repository.tree.length} entries (two levels deep)`,
+    `  tree        ${repository.tree.length} entries (up to four levels deep)`,
     "  technology hints:",
     ...formatMatches(repository.technologyMatches).map((line) => `  ${line}`),
     `  sampled files (${repository.selectedFiles.length}, ~${Math.ceil(sampledCharacters / 4)} tokens):`,
-    ...repository.selectedFiles.map((file) => `    ${file.path} (${file.content.length} chars)`),
+    ...repository.selectedFiles.map((file) => {
+      const lines = file.lineCount === undefined ? "" : `${file.lineCount} lines; `;
+      const excerpt = file.truncated ? ", excerpt" : "";
+      return `    ${file.path} (${lines}${file.content.length} chars${excerpt})`;
+    }),
   ];
 }
 

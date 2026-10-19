@@ -14,11 +14,12 @@ export const taxonomyVersion = taxonomy.version;
 export const rubricVersion = "v1";
 
 /** Bump when the judge prompt (judge.ts instructions or few-shot.ts examples) changes. */
-export const promptVersion = "v3";
+export const promptVersion = "v4";
 
 /**
  * Bump when stage-2 extraction changes what the judge is sent: file sampling in
  * apps/api/src/profile-pipeline/repository.ts, or technology detection in detect.ts.
- * v2: manifests in subfolders (monorepos) are detected.
+ * v4: up to 20 files, prioritized by nonblank lines with technology-coverage slots,
+ * supporting configuration and distributed excerpts of larger files.
  */
-export const samplerVersion = "v3";
+export const samplerVersion = "v4";

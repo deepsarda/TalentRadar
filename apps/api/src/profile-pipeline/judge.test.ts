@@ -4,6 +4,8 @@ import { promptVersion, taxonomy, taxonomyIds } from "@talentradar/shared";
 import { describe, expect, it } from "vitest";
 import { type FewShot, fewShots } from "./few-shot.js";
 import {
+  buildPrompt,
+  FetchResultSchema,
   fixedPromptPrefix,
   judgeProfile,
   noCv,
@@ -18,8 +20,8 @@ import {
  * Bump promptVersion in packages/shared/src/taxonomy/versions.ts, then record both values here.
  */
 const pinnedPrompt = {
-  version: "v3",
-  fingerprint: "5f3f756c400c5d1d6c094a80336f3b4e0b04c97c602cd2c025e660195f660fb7",
+  version: "v4",
+  fingerprint: "bc138d81378b23e70355d64c608c41df8b2997ad49e981086a4b61635099e8bc",
 };
 
 interface SchemaNode {
@@ -124,7 +126,7 @@ describe("few-shot set", () => {
     };
 
   it("teaches what the spec's table says each shot teaches", () => {
-    expect(fewShots).toHaveLength(5);
+    expect(fewShots).toHaveLength(6);
     const tutorial = repo(0);
     expect(tutorial.originality).toBe(2);
     expect(tutorial.skills.every((skill) => skill.level <= 2)).toBe(true);
@@ -150,7 +152,7 @@ describe("few-shot set", () => {
   });
 
   it("teaches a different area per shot, and reports areas alongside tools", () => {
-    const areaSets = fewShots.map((_, index) =>
+    const areaSets = fewShots.slice(0, 5).map((_, index) =>
       repo(index)
         .skills.map((skill) => skill.id)
         .filter((id) => id in taxonomy.domains),
@@ -159,6 +161,35 @@ describe("few-shot set", () => {
     // Tools like python may repeat across shots; each shot's main area should not.
     const firstAreas = areaSets.map((areas) => areas.at(-1));
     expect(new Set(firstAreas).size).toBe(firstAreas.length);
+  });
+
+  it("teaches broad technology recall without turning a dependency into AI engineering", () => {
+    const coverage = repo(5);
+    expect(coverage.skills.map((skill) => skill.id)).toEqual(
+      expect.arrayContaining([
+        "react",
+        "typescript",
+        "css",
+        "vite",
+        "nodejs",
+        "express",
+        "mongodb",
+        "python",
+        "numpy",
+        "pytorch",
+        "docker",
+        "github_actions",
+        "terraform",
+        "aws",
+        "frontend",
+        "backend",
+        "data",
+        "devops_cloud",
+      ]),
+    );
+    expect(coverage.skills.find((skill) => skill.id === "pytorch")?.level).toBe(1);
+    expect(coverage.skills.some((skill) => skill.id === "ai_ml")).toBe(false);
+    expect(new Set(coverage.skills.map((skill) => skill.id)).size).toBe(coverage.skills.length);
   });
 
   it("is clearly synthetic", () => {
@@ -173,12 +204,40 @@ describe("few-shot set", () => {
   });
 });
 
+describe("real participant prompt", () => {
+  it("preserves sampled-file metadata through the persisted job schema and into the model input", () => {
+    const facts = factsFor(fewShots[0] as FewShot);
+    if (!facts.included) throw new Error("fixture must be included");
+    facts.selectedFiles = [
+      {
+        path: "main.py",
+        content: "import pygame\n[... source omitted ...]\nrun()",
+        lineCount: 2400,
+        truncated: true,
+      },
+    ];
+    const persisted = FetchResultSchema.parse(facts);
+    const prompt = buildPrompt(
+      [persisted, { repository: "example/ignored", included: false, exclusionReason: "empty" }],
+      noCv,
+      0,
+    );
+    const realInput = prompt.slice(
+      prompt.lastIndexOf("<untrusted_repository_data>") + "<untrusted_repository_data>".length,
+      prompt.lastIndexOf("</untrusted_repository_data>"),
+    );
+    const parsed = JSON.parse(realInput);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].files).toEqual(facts.selectedFiles);
+    expect(parsed[0].facts.technologyHints).toEqual(facts.technologyMatches);
+  });
+});
+
 /*
  * Spec Day-2 tests against the pinned model; they spend real quota, so they only run with
  * GEMINI_API_KEY set (free tier: the input below is a synthetic shot, no CV).
- *  1. Enum size: the request carries the full taxonomy enum (every id) and the full JSON schema,
- *     and Gemini accepts it. If it is rejected as too large, the spec's fallback applies: drop the
- *     enum from responseSchema() and rely on the prompt list plus sanitizeResponse's id check.
+ *  1. Schema compatibility: the large taxonomy enum was rejected by Gemini, so ids live in the
+ *     prompt and sanitizeResponse enforces them. The fallback schema must still be accepted.
  *  2. Key order: the RAW response string keeps reasoning before verdict (thoughts before summary,
  *     repo thoughts before originality, evidence -> thought -> level), not alphabetical order.
  */
@@ -187,11 +246,11 @@ describe("pinned Gemini model (live, Day-2 tests)", () => {
   const model = process.env["GEMINI_MODEL"] ?? "gemini-3.1-flash-lite";
 
   it.skipIf(!apiKey)(
-    "accepts the full taxonomy enum and schema, and keeps reasoning-before-verdict key order",
+    "accepts the taxonomy fallback schema and keeps reasoning-before-verdict key order",
     async () => {
       const shot = fewShots[4] as FewShot;
       const schema = responseSchema() as SchemaNode & { properties: Record<string, unknown> };
-      expect(JSON.stringify(schema)).toContain(`"enum":${JSON.stringify(taxonomyIds)}`);
+      expect(JSON.stringify(schema)).not.toContain(`"enum":${JSON.stringify(taxonomyIds)}`);
       const { rawText, result } = await judgeProfile({
         ai: new GoogleGenAI({ apiKey: apiKey ?? "" }),
         model,

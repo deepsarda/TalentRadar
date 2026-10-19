@@ -33,6 +33,29 @@ Apply safe Biome formatting, lint, and import fixes:
 pnpm fix
 ```
 
+## Repository assessment
+
+The judge reviews up to 20 files per repository. Sampling first selects the 14 source files with
+the most nonblank lines, then uses the remaining slots to cover additional technologies and file
+types. Manifests, stylesheets, SQL, CI workflows, containers and infrastructure configuration can
+provide evidence even when they are small. Eligible files may be up to 256 KB; dependencies,
+generated files and build output remain excluded.
+
+All sampled contents share `REPO_TOKEN_BUDGET` (default 12,000 estimated tokens, at four characters
+per token). Small files are sent whole. Larger files get excerpts from the beginning, middle and
+end, with omission markers, original line counts and truncation metadata. README and tree data
+are supplied separately. Inspect a local checkout without making a model call:
+
+```sh
+pnpm run profile --dry-run .
+```
+
+The prompt requires a file-by-file technology inventory, reconciliation of every detector hint,
+an evidence check and a final coverage audit. It reports supported tools and domains separately,
+using the configured taxonomy's ids and aliases. Six synthetic examples calibrate scores and
+demonstrate secondary technology coverage. Declaring a dependency establishes presence, not
+advanced proficiency. Prompt and sampler versions invalidate assessments cached under older rules.
+
 ## Free deployment
 
 The repository deploys as one Docker service on Render. Express serves the built React app from the same origin, avoiding CORS and cross-site session-cookie setup. MongoDB Atlas M0 supplies durable storage.

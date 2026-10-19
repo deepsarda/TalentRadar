@@ -510,7 +510,9 @@ Implement the four specification stages without merging responsibilities.
 
 - Parse supported manifests and taxonomy detection rules.
 - Record language mix, authorship, tests, CI, containers, and last push.
-- Build the two-level file tree and select up to eight representative source files per repository.
+- Build the four-level file tree (up to 400 entries) and select up to 20 files per repository: 14 largest source files by nonblank lines, then technology and file-type coverage slots.
+- Include small manifests, stylesheets, SQL, delivery and infrastructure files; accept eligible files up to 256 KB.
+- Share the source budget across files, redistributing unused shares; mark beginning/middle/end excerpts with original line counts and truncation metadata.
 - Exclude dependencies, builds, generated output, lockfiles, minified files, and notebook output.
 - Enforce the 4,000–20,000 token range and 12,000 default per repository.
 
@@ -518,7 +520,8 @@ Implement the four specification stages without merging responsibilities.
 
 - One structured call per participant containing all selected repositories and CV inputs.
 - Temperature 0, pinned model, prompt version, taxonomy version, and 16,000 output-token limit.
-- Fixed prefix contains instructions, taxonomy, rubrics, and five domain-diverse few-shot examples.
+- Fixed prefix contains the full review workflow, taxonomy with aliases, rubrics, five domain-diverse calibration examples and a sixth example for broad technology coverage.
+- Reconcile each language and detector hint against citable evidence, assess every supported tool and area, and audit coverage before returning the result.
 - Reasoning fields precede verdict fields as far as the provider allows; test raw key order with the pinned model.
 - Validate repository blocks independently.
 - Drop citations to files that were not supplied.
