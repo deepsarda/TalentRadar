@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { taxonomy } from "./taxonomy/taxonomy.js";
 
 export const IdentifierSchema = z.string().trim().min(1).max(128);
 export const SkillIdSchema = z.string().regex(/^[a-z][a-z0-9_]*$/);
@@ -13,14 +14,24 @@ export const EvidenceSchema = z.object({
   note: z.string().min(1).max(500),
 });
 
-export const ProfileSkillSchema = z.object({
-  id: SkillIdSchema,
-  level: z.number().min(1).max(5),
-  confidence: ConfidenceSchema,
-  effective: EffectiveLevelSchema,
-  evidence: z.array(EvidenceSchema).default([]),
-  thought: z.string().max(600).default(""),
-});
+export const ProfileSkillSchema = z
+  .object({
+    id: SkillIdSchema,
+    level: z.number().min(0).max(5),
+    confidence: ConfidenceSchema,
+    effective: EffectiveLevelSchema,
+    evidence: z.array(EvidenceSchema).default([]),
+    thought: z.string().max(600).default(""),
+  })
+  .superRefine((skill, context) => {
+    if (skill.level === 0 && !(skill.id in taxonomy.domains)) {
+      context.addIssue({
+        code: "custom",
+        path: ["level"],
+        message: "Level 0 is reserved for domains with no observed evidence",
+      });
+    }
+  });
 
 export const PersonProfileSchema = z.object({
   personId: IdentifierSchema,

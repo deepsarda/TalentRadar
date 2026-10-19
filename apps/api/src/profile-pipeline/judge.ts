@@ -6,6 +6,7 @@ import {
 } from "@google/genai";
 import {
   type DetectedTool,
+  DomainScoresSchema,
   originalityRubric,
   type ProfileJudgment,
   ProfileJudgmentSchema,
@@ -112,6 +113,7 @@ const RawRepositorySchema = z.object({
   repo: z.string(),
   thoughts: z.string().max(600),
   originality: z.number().int().min(1).max(5),
+  domains: DomainScoresSchema,
   skills: z.array(z.unknown()),
   flags: z.array(z.enum(["possible_prompt_injection", "readme_overclaims", "mostly_boilerplate"])),
 });
@@ -139,6 +141,33 @@ export const RawResponseSchema = z.object({
 /** The structured-output schema sent to Gemini; key order is reasoning before verdict. */
 export function responseSchema() {
   const flags = ["possible_prompt_injection", "readme_overclaims", "mostly_boilerplate"];
+  const domainIds = Object.keys(taxonomy.domains);
+  const domainScore = {
+    type: "object",
+    propertyOrdering: ["evidence", "thought", "level"],
+    required: ["evidence", "thought", "level"],
+    properties: {
+      evidence: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["path", "note"],
+          properties: { path: { type: "string" }, note: { type: "string" } },
+        },
+      },
+      thought: {
+        type: "string",
+        description: "Concise evidence-based assessment, or no evidence in the reviewed inputs.",
+      },
+      level: {
+        type: "integer",
+        minimum: 0,
+        maximum: 5,
+        description:
+          "0 means no evidence observed; 1-5 use the proficiency rubric and require a cited path.",
+      },
+    },
+  };
   return {
     type: "object",
     propertyOrdering: ["thoughts", "summary", "repos", "cv", "flags"],
@@ -150,14 +179,23 @@ export function responseSchema() {
         type: "array",
         items: {
           type: "object",
-          propertyOrdering: ["repo", "thoughts", "originality", "skills", "flags"],
-          required: ["repo", "thoughts", "originality", "skills", "flags"],
+          propertyOrdering: ["repo", "thoughts", "originality", "domains", "skills", "flags"],
+          required: ["repo", "thoughts", "originality", "domains", "skills", "flags"],
           properties: {
             repo: { type: "string" },
             thoughts: { type: "string" },
             originality: { type: "integer", minimum: 1, maximum: 5 },
+            domains: {
+              type: "object",
+              propertyOrdering: domainIds,
+              required: domainIds,
+              additionalProperties: false,
+              properties: Object.fromEntries(domainIds.map((id) => [id, domainScore])),
+            },
             skills: {
               type: "array",
+              description:
+                "Every evidenced technology, including supporting tools and minor languages. Domains are scored separately in domains; do not limit technology count.",
               items: {
                 type: "object",
                 propertyOrdering: ["id", "evidence", "thought", "level"],
@@ -265,14 +303,15 @@ const instructions = [
   "1. INVENTORY ALL INPUTS. For each repository, inspect every supplied file, the README, the whole visible tree, every language and every technologyHint. Identify modules, entry points, clients, services, persistence, scripts, tests and delivery configuration. Large files are prioritized for inspection, but size, dependency count and language-byte share do not establish skill. A small config or secondary-language file may be the only evidence of a technology.",
   "2. BUILD A TECHNOLOGY CHECKLIST. Gather candidate taxonomy ids from direct imports/requires, package dependencies and scripts, SDK clients, framework APIs, annotations, JSX/templates, styles, SQL/schema/migrations, CLI/build commands, containers, workflows and infrastructure. Include development and test tools when explicitly evidenced. Check frontend, backend, data/AI, mobile, systems, games, security and delivery work wherever relevant. A project can span several areas. Libraries loaded by CDN, raw implementations without dependencies and tools used only in a subproject count too. Distinguish the project's own stack from technology names or code embedded only in strings, synthetic fixtures, documentation and example datasets; those references alone do not establish that the project uses that technology.",
   "3. RECONCILE EVERY HINT. For each language and technologyHint, either find a citable supporting path or determine that the hint is unsupported, ambiguous, incidental or contradicted. Do not silently ignore a supported hint because it is peripheral. A dependency declaration supports declared presence, not demonstrated advanced usage: report it cautiously and say if implementation was not seen. Text concepts and generic directory names require corroboration. Hints are not the ceiling: also include technologies visible in the supplied code that the detectors missed.",
-  "4. MATCH THE FULL TAXONOMY. Resolve labels and aliases to exact ids from the taxonomy below. Return both technologies and evidenced domain ids, including secondary languages, styles, databases, testing, build tools and hosting. Do not collapse react, typescript, css and frontend into one entry; each supported id is useful. Conversely, React does not automatically prove Next.js, JavaScript does not automatically prove TypeScript, Docker does not automatically prove Kubernetes, and using an LLM API does not prove model training. Domain associations in the taxonomy are search aids, not proof that every associated area is demonstrated. Do not impose a top-N skill limit or copy the examples' skill counts.",
+  "4. MATCH THE FULL TAXONOMY. Resolve labels and aliases to exact ids from the taxonomy below. Score all domains in the required domains object and report all evidenced technologies in skills, including secondary languages, styles, databases, testing, build tools and hosting. Do not collapse react, typescript, css and frontend into one entry; each supported id is useful. Conversely, React does not automatically prove Next.js, JavaScript does not automatically prove TypeScript, Docker does not automatically prove Kubernetes, and using an LLM API does not prove model training. Domain associations in the taxonomy are search aids, not proof that every associated area is demonstrated. Do not impose a top-N skill limit or copy the examples' skill counts.",
   "5. TRACE IMPLEMENTATION DEPTH. Follow the visible inputs, transformations and outputs across related files. Distinguish a declaration, import or thin wrapper from substantive implementation. Check the relevant code for structure, error handling, validation, state, data modeling, test assertions, security, concurrency and performance where applicable. hasTests/hasCi/containerized show presence only; they do not prove test quality, passing checks or production operation. A comment describing a feature is weaker than code implementing it. Separate observed defects from uncertainty caused by excerpts; missing from this sample is not proof of missing from the repository.",
-  "6. ATTACH EVIDENCE BEFORE SCORING. Every skill needs at least one evidence item from that same repository. Prefer supplied file contents and describe the concrete import, declaration, API, query, assertion or implementation shown. Use multiple complementary paths for broad domains when available. Copy paths exactly from files, readmePath or tree; never invent a path or cite an import target that was not listed. You may cite a tree-only file/folder when its name unambiguously identifies the technology, such as a .kt file for kotlin. Explicitly say only its name was seen and keep that assessment at level 1-2. Generic src/ or api/ names alone cannot establish a framework. A README alone supports at most level 2 and only a documented claim, not verified implementation. No citable support means omit the skill.",
+  "6. ATTACH EVIDENCE BEFORE SCORING. Every technology and every positive domain score needs at least one evidence item from that same repository; domain 0 has an empty evidence array. Prefer supplied file contents and describe the concrete import, declaration, API, query, assertion or implementation shown. Use multiple complementary paths for broad domains when available. Copy paths exactly from files, readmePath or tree; never invent a path or cite an import target that was not listed. You may cite a tree-only file/folder when its name unambiguously identifies the technology, such as a .kt file for kotlin. Explicitly say only its name was seen and keep that assessment at level 1-2. Generic src/ or api/ names alone cannot establish a framework. A README alone supports at most level 2 and only a documented claim, not verified implementation. No citable support means omit the skill.",
   "7. CALIBRATE EACH SKILL SEPARATELY. Compare the observed work with the proficiency anchors and choose the highest level supported by concrete evidence. State the important capability and limitation briefly. Declaration-only or name-only evidence belongs at 1-2; a small independent implementation can be 2; substantive structured work with errors and some tests/CI can be 3; 4 requires the rubric's architecture, advanced usage, tests and security/performance care; 5 needs evidence of deep work others rely on. A strong tool does not lift every other tool, and a weak peripheral tool does not cap a strong one. Use the full scale when justified, without forcing a distribution. Authorship, recency and originality are weighted later by deterministic code; do not apply those numerical penalties again to proficiency.",
   "8. ASSESS ORIGINALITY AND FLAGS. Judge originality separately using its own rubric. An API wrapper can be a useful original application without novel AI work. Familiar techniques implemented independently can earn originality 4; originality 5 needs the specific novel problem/design visible in code and an explanation of what goes beyond a known pattern. README novelty claims are not proof, and unfamiliarity is not novelty. When originality is indeterminate, use 3 and state the uncertainty. Set readme_overclaims only for a material claim contradicted by the visible implementation, not merely unsampled files. Set mostly_boilerplate when the supplied code is predominantly scaffolding, not simply because it uses a framework.",
   "9. KEEP CV CLAIMS SEPARATE. Read only the attached CV images for personal details and claimed skills. Each cv.claims item needs an exact short visible quote and a taxonomy id. Do not turn a CV statement or extracted link into repository evidence or copy repository scores into claim levels. A claim without matching code stays a modest claimed level, not a verified capability or accusation. With zero attached pages, return cv: {claims: []} and omit name, college, year and branch. Never infer identity or proficiency from repository owner names, college prestige or demographics.",
-  "10. FINAL COVERAGE AND CONSISTENCY AUDIT. Compare the output skill ids against the candidate checklist, every supplied file, every language and every technologyHint one more time. Restore all supported omissions, especially supporting tools, minor languages and secondary areas; remove unsupported extrapolations. Each id appears once per repository with its evidence combined. Every input repository appears exactly once in the same order, including a repository with no supported skills. Evidence must belong to its repository and match the actual excerpt or explicitly identify name-only support. Scores must be integers 1-5. Check flags, exact taxonomy ids, CV quotes and schema fields. Cross-repository summaries must reflect the final per-repository assessments and their limits.",
+  "10. FINAL COVERAGE AND CONSISTENCY AUDIT. Compare the output skill ids against the candidate checklist, every supplied file, every language and every technologyHint one more time. Restore all supported omissions, especially supporting tools, minor languages and secondary areas; remove unsupported extrapolations. Each id appears once per repository with its evidence combined. Every input repository appears exactly once in the same order, including a repository with no supported skills. Evidence must belong to its repository and match the actual excerpt or explicitly identify name-only support. Technology and CV claim scores must be integers 1-5; domain scores must be integers 0-5. Check flags, exact taxonomy ids, CV quotes and schema fields. Cross-repository summaries must reflect the final per-repository assessments and their limits.",
   "OUTPUT CONTRACT. Use only ids from the taxonomy. Preserve schema key order: thoughts before summary; repository thoughts before originality; skill evidence, then thought, then level; CV claim quote, then thought, then level. Each thought/thoughts must stay under 60 words and 600 characters; top-level thoughts may use up to 1000 characters, summary up to 600, and each evidence note up to 500. Return compact JSON without indentation or unnecessary whitespace. Prefer short specific sentences and avoid repeating repository-wide explanations in every skill. Spend the output budget on complete supported skill coverage; shorten prose rather than omitting skills or repositories. Finish the entire JSON object. Return no extra keys, Markdown or prose outside the JSON.",
+  `MANDATORY DOMAIN SCORES. For EVERY repository, fill EVERY key in its required domains object: ${Object.keys(taxonomy.domains).join(", ")}. Review each domain separately even when unrelated to the project's main stack. Put domain assessments only in domains and put technologies only in skills. For each domain write evidence, thought, then level. Use integer 0 with evidence: [] and a brief no-evidence explanation when the supplied inputs do not support that domain. Zero means no evidence observed, not that the participant lacks ability. Positive domain scores 1-5 follow the existing rubric and require a real cited path. Never invent evidence to fill a domain, default an unreviewed domain, or omit a key. A domain association in a tool's taxonomy entry is not sufficient evidence by itself. The participant's scores are aggregated from the evidenced repository scores; zero-evidence repositories do not dilute demonstrated work.`,
 ].join("\n");
 
 const compactTaxonomy = {
@@ -347,11 +386,15 @@ export function sanitizeResponse(
   );
   const flags = new Set(response.flags);
   if (cv.possiblePromptInjection) flags.add("possible_prompt_injection");
+  const seenRepositories = new Set<string>();
   const repos = response.repos.flatMap((candidate) => {
     const parsed = RawRepositorySchema.safeParse(candidate);
     if (!parsed.success) return [];
     const repository = facts.get(parsed.data.repo);
     if (!repository?.included) return [];
+    if (seenRepositories.has(repository.repository))
+      throw new Error("Duplicate repository assessment");
+    seenRepositories.add(repository.repository);
     // Citable: files whose contents were sent, the README, any file listed in the tree (a real
     // tracked file, e.g. a Kotlin source that wasn't sampled), and any real folder: one that some
     // listed path sits under. Folders are stored with a trailing "/" so links open GitHub's tree.
@@ -368,12 +411,21 @@ export function sanitizeResponse(
     };
     const skills = parsed.data.skills.flatMap((skillCandidate) => {
       const skill = RawSkillSchema.safeParse(skillCandidate);
-      if (!skill.success || !knownIds.has(skill.data.id)) return [];
+      if (!skill.success || !(skill.data.id in taxonomy.technologies)) return [];
       const evidence = skill.data.evidence.flatMap((item) => {
         const path = citable(item.path);
         return path ? [{ ...item, path }] : [];
       });
       return evidence.length > 0 ? [{ ...skill.data, evidence }] : [];
+    });
+    const domains = Object.entries(parsed.data.domains).map(([id, score]) => {
+      const evidence = score.evidence.flatMap((item) => {
+        const path = citable(item.path);
+        return path ? [{ ...item, path }] : [];
+      });
+      if (score.level > 0 && evidence.length === 0)
+        throw new Error("Positive domain score has no valid evidence");
+      return { id, ...score, evidence };
     });
     for (const flag of parsed.data.flags) flags.add(flag);
     return [
@@ -383,10 +435,12 @@ export function sanitizeResponse(
         pushedAt: repository.pushedAt,
         authorship: repository.authorship,
         originality: parsed.data.originality,
-        skills,
+        skills: [...domains, ...skills],
       },
     ];
   });
+  if (seenRepositories.size !== facts.size)
+    throw new Error("Every repository requires a complete assessment of all domains");
   const claims = response.cv.claims.flatMap((candidate) => {
     const claim = RawClaimSchema.safeParse(candidate);
     return claim.success && knownIds.has(claim.data.id) ? [claim.data] : [];
@@ -465,9 +519,9 @@ export async function judgeProfile(
   call: JudgeCall,
 ): Promise<{ result: ProfileJudgment; rawText: string; diagnostics: JudgeResponseDiagnostics }> {
   const prompt = buildPrompt(call.repositories, call.cv, call.pages.length, call.attempt);
-  // Thinking shares the provider's output cap with the JSON. Recovery leaves more room for
-  // delivery while retaining the complete evidence and the prompt's review/coverage workflow.
-  const thinkingLevel = call.attempt > 1 ? ThinkingLevel.LOW : ThinkingLevel.HIGH;
+  // Medium thinking leaves room in the shared generation limit for complete domain and tool
+  // assessments. Retries compact the response without removing evidence or repositories.
+  const thinkingLevel = ThinkingLevel.MEDIUM;
   const estimatedTokens =
     Math.ceil(prompt.length / CHARACTERS_PER_TOKEN) +
     call.pages.length * TOKENS_PER_CV_PAGE +
@@ -482,7 +536,6 @@ export async function judgeProfile(
         ...call.pages.map((data) => ({ inlineData: { data, mimeType: "image/png" } })),
       ],
       config: {
-        temperature: 0,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
         thinkingConfig: { thinkingLevel },
         responseMimeType: "application/json",
@@ -492,6 +545,12 @@ export async function judgeProfile(
     });
     settle(response.usageMetadata?.totalTokenCount ?? estimatedTokens);
   } catch (error) {
+    // A cut-off HTTP response can fail inside the SDK before there is a candidate/finish reason.
+    if (error instanceof SyntaxError) {
+      throw new Error(
+        "Gemini transport returned invalid response JSON before completion metadata was available",
+      );
+    }
     throw geminiRetryLater(error, call.attempt) ?? error;
   }
   const rawText = response.text;
@@ -514,11 +573,15 @@ export async function judgeProfile(
   const parsed = RawResponseSchema.safeParse(raw);
   if (!parsed.success)
     throw new JudgeOutputError("returned an invalid response structure", diagnostics);
-  return {
-    result: sanitizeResponse(parsed.data, call.repositories, call.cv),
-    rawText,
-    diagnostics,
-  };
+  try {
+    return {
+      result: sanitizeResponse(parsed.data, call.repositories, call.cv),
+      rawText,
+      diagnostics,
+    };
+  } catch {
+    throw new JudgeOutputError("returned incomplete or invalid domain assessments", diagnostics);
+  }
 }
 
 export function createJudgePersonHandler(db: Db, environment: Environment) {

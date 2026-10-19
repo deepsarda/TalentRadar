@@ -20,8 +20,8 @@ import {
  * Bump promptVersion in packages/shared/src/taxonomy/versions.ts, then record both values here.
  */
 const pinnedPrompt = {
-  version: "v5",
-  fingerprint: "4983628b8b2a81ae04fc9fc3364406471fd70066016a89bf9a949d98412fb4c9",
+  version: "v6",
+  fingerprint: "ac60a17923a1ac8a574ea1f9c11c90106107aacac40bc21e3367c8b7e65d500a",
 };
 
 interface SchemaNode {
@@ -70,11 +70,20 @@ function factsFor(shot: FewShot): RepositoryFacts {
 
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 
+type ExampleRepository = {
+  thoughts: string;
+  skills: Array<{ id: string; evidence: Array<{ path: string }>; thought: string; level: number }>;
+  domains: Record<string, { evidence: Array<{ path: string }>; thought: string; level: number }>;
+};
+
+const assessments = (repo: unknown) => {
+  const block = repo as ExampleRepository;
+  return [...block.skills, ...Object.values(block.domains)];
+};
+
 describe.each(fewShots.map((shot) => [shot.teaches, shot] as const))("few-shot: %s", (_, shot) => {
   const cited = shot.expected.repos.flatMap((repo) =>
-    (repo as { skills: Array<{ evidence: Array<{ path: string }> }> }).skills.flatMap((skill) =>
-      skill.evidence.map((item) => item.path),
-    ),
+    assessments(repo).flatMap((skill) => skill.evidence.map((item) => item.path)),
   );
 
   it("parses with the real output schema and loses nothing in per-block validation", () => {
@@ -106,14 +115,14 @@ describe.each(fewShots.map((shot) => [shot.teaches, shot] as const))("few-shot: 
     const thoughts = [
       shot.expected.thoughts,
       ...shot.expected.repos.flatMap((repo) => {
-        const block = repo as { thoughts: string; skills: Array<{ thought: string }> };
-        return [block.thoughts, ...block.skills.map((skill) => skill.thought)];
+        const block = repo as ExampleRepository;
+        return [block.thoughts, ...assessments(repo).map((skill) => skill.thought)];
       }),
     ];
     for (const thought of thoughts) expect(words(thought), thought).toBeLessThanOrEqual(65);
     const tokens = JSON.stringify(shot).length / 4;
     expect(tokens).toBeGreaterThan(1_000);
-    expect(tokens).toBeLessThan(3_500);
+    expect(tokens).toBeLessThan(4_000);
   });
 });
 
@@ -123,6 +132,7 @@ describe("few-shot set", () => {
       originality: number;
       flags: string[];
       skills: Array<{ id: string; level: number; evidence: Array<{ path: string }> }>;
+      domains: Record<string, { level: number }>;
     };
 
   it("teaches what the spec's table says each shot teaches", () => {
@@ -153,9 +163,9 @@ describe("few-shot set", () => {
 
   it("teaches a different area per shot, and reports areas alongside tools", () => {
     const areaSets = fewShots.slice(0, 5).map((_, index) =>
-      repo(index)
-        .skills.map((skill) => skill.id)
-        .filter((id) => id in taxonomy.domains),
+      Object.entries(repo(index).domains)
+        .filter(([, score]) => score.level > 0)
+        .map(([id]) => id),
     );
     for (const areas of areaSets) expect(areas.length).toBeGreaterThan(0);
     // Tools like python may repeat across shots; each shot's main area should not.
@@ -181,14 +191,12 @@ describe("few-shot set", () => {
         "github_actions",
         "terraform",
         "aws",
-        "frontend",
-        "backend",
-        "data",
-        "devops_cloud",
       ]),
     );
     expect(coverage.skills.find((skill) => skill.id === "pytorch")?.level).toBe(1);
-    expect(coverage.skills.some((skill) => skill.id === "ai_ml")).toBe(false);
+    expect(coverage.domains["ai_ml"]?.level).toBe(0);
+    for (const id of ["frontend", "backend", "data", "devops_cloud"])
+      expect(coverage.domains[id]?.level).toBeGreaterThan(0);
     expect(new Set(coverage.skills.map((skill) => skill.id)).size).toBe(coverage.skills.length);
   });
 
@@ -230,6 +238,62 @@ describe("real participant prompt", () => {
     expect(parsed).toHaveLength(1);
     expect(parsed[0].files).toEqual(facts.selectedFiles);
     expect(parsed[0].facts.technologyHints).toEqual(facts.technologyMatches);
+  });
+});
+
+describe("mandatory domain assessment", () => {
+  const domainIds = Object.keys(taxonomy.domains);
+  const shot = fewShots.at(-1) as FewShot;
+  const facts = factsFor(shot);
+  const changed = () =>
+    structuredClone(shot.expected) as typeof shot.expected & {
+      repos: Array<{
+        domains: Record<
+          string,
+          { level: number; thought: string; evidence: Array<{ path: string; note: string }> }
+        >;
+      }>;
+    };
+
+  it("makes all domain names required object properties in the provider schema", () => {
+    const schema = responseSchema().properties.repos.items.properties;
+    expect(schema.domains.required).toEqual(domainIds);
+    expect(Object.keys(schema.domains.properties)).toEqual(domainIds);
+    expect(schema.domains.additionalProperties).toBe(false);
+    expect(schema.domains.properties["frontend"]?.properties.level).toMatchObject({
+      minimum: 0,
+      maximum: 5,
+    });
+  });
+
+  it("keeps every explicit domain score, including zeros, in the validated repository", () => {
+    const result = sanitizeResponse(shot.expected, [facts], noCv);
+    const domains = result.repos[0]?.skills.filter((skill) => skill.id in taxonomy.domains) ?? [];
+    expect(domains.map((skill) => skill.id)).toEqual(domainIds);
+    expect(domains.find((skill) => skill.id === "backend")?.level).toBeGreaterThan(0);
+    expect(domains.find((skill) => skill.id === "ai_ml")).toMatchObject({ level: 0, evidence: [] });
+  });
+
+  it("rejects missing domain scores and missing repository assessments rather than inventing zeros", () => {
+    const raw = changed();
+    delete raw.repos[0]?.domains["security"];
+    expect(() => sanitizeResponse(raw, [facts], noCv)).toThrow(/Every repository requires/);
+    expect(() => sanitizeResponse({ ...shot.expected, repos: [] }, [facts], noCv)).toThrow(
+      /Every repository requires/,
+    );
+  });
+
+  it("rejects positive domains without evidence or without valid paths", () => {
+    const missing = changed();
+    const domain = missing.repos[0]?.domains["backend"];
+    if (!domain) throw new Error("fixture needs backend");
+    domain.evidence = [];
+    expect(() => sanitizeResponse(missing, [facts], noCv)).toThrow();
+    const invented = changed();
+    const backend = invented.repos[0]?.domains["backend"];
+    if (!backend) throw new Error("fixture needs backend");
+    backend.evidence = [{ path: "invented.ts", note: "Not a real path" }];
+    expect(() => sanitizeResponse(invented, [facts], noCv)).toThrow(/no valid evidence/);
   });
 });
 
@@ -296,14 +360,26 @@ describe("evidence from the file tree", () => {
         thoughts: "t",
         summary: "s",
         repos: [
-          { repo: "riya/nox", thoughts: "t", originality: 3, skills: [skill(path)], flags: [] },
+          {
+            repo: "riya/nox",
+            thoughts: "t",
+            originality: 3,
+            domains: Object.fromEntries(
+              Object.keys(taxonomy.domains).map((id) => [
+                id,
+                { evidence: [], thought: "No evidence.", level: 0 },
+              ]),
+            ),
+            skills: [skill(path)],
+            flags: [],
+          },
         ],
         cv: { claims: [] },
         flags: [],
       },
       [repository],
       noCv,
-    ).repos[0]?.skills[0]?.evidence[0]?.path ?? null;
+    ).repos[0]?.skills.find((skill) => skill.id === "kotlin")?.evidence[0]?.path ?? null;
 
   it("accepts a real tracked file that wasn't sampled", () => {
     expect(judged("core/Vm.kt")).toBe("core/Vm.kt");

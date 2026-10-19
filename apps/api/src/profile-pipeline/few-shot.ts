@@ -1,3 +1,4 @@
+import { taxonomy } from "@talentradar/shared";
 import type { RawJudgeResponse, RepositoryPromptInput } from "./judge.js";
 
 /*
@@ -1511,6 +1512,49 @@ app.listen(3000);`,
   },
 };
 
+interface ExampleScore {
+  evidence: Array<{ path: string; note: string }>;
+  thought: string;
+  level: number;
+}
+
+/** The authored positive scores above, plus explicit no-evidence decisions for every other domain. */
+function withAllDomains(shot: FewShot): FewShot {
+  return {
+    ...shot,
+    expected: {
+      ...shot.expected,
+      repos: shot.expected.repos.map((candidate) => {
+        const repo = candidate as {
+          repo: string;
+          thoughts: string;
+          originality: number;
+          skills: Array<ExampleScore & { id: string }>;
+          flags: string[];
+        };
+        return {
+          repo: repo.repo,
+          thoughts: repo.thoughts,
+          originality: repo.originality,
+          domains: Object.fromEntries(
+            Object.keys(taxonomy.domains).map((id) => {
+              const score = repo.skills.find((skill) => skill.id === id);
+              return [
+                id,
+                score
+                  ? { evidence: score.evidence, thought: score.thought, level: score.level }
+                  : { evidence: [], thought: "No evidence in the supplied inputs.", level: 0 },
+              ];
+            }),
+          ),
+          skills: repo.skills.filter((skill) => !(skill.id in taxonomy.domains)),
+          flags: repo.flags,
+        };
+      }),
+    },
+  };
+}
+
 export const fewShots: readonly FewShot[] = [
   tutorialClone,
   solidApp,
@@ -1518,4 +1562,4 @@ export const fewShots: readonly FewShot[] = [
   overclaimingReadme,
   injectionAttempt,
   stackCoverage,
-];
+].map(withAllDomains);

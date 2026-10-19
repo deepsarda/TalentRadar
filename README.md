@@ -56,11 +56,16 @@ using the configured taxonomy's ids and aliases. Six synthetic examples calibrat
 demonstrate secondary technology coverage. Declaring a dependency establishes presence, not
 advanced proficiency. Prompt and sampler versions invalidate assessments cached under older rules.
 
+Every repository assessment must score all 12 domains in a required `domains` object. A score of 0
+means no evidence in the reviewed inputs; 1–5 requires valid file evidence. Missing domains or
+unsupported positive scores reject the assessment. Participant profiles include every domain,
+and repositories with no evidence do not dilute positive scores or increase confidence.
+
 The worker records Gemini's finish reason, output length and output/thinking token counts before
 parsing the assessment. Truncated or blocked responses are rejected even if they contain a
-parseable JSON prefix. A retry requests compact explanations and uses lower native thinking to
-leave more of the shared output budget for the complete JSON, keeping every repository and its
-evidence. Structured output still requires completion checks and application validation.
+parseable JSON prefix. A retry requests compact explanations while retaining medium native thinking,
+every repository and its evidence. Structured output still requires completion checks and
+application validation; the shared thinking/output limit can still interrupt generation.
 
 ## Free deployment
 

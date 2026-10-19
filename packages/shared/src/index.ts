@@ -2,6 +2,8 @@ export {
   aggregateProfile,
   CvClaimSchema,
   type DetectedTool,
+  DomainScoreSchema,
+  DomainScoresSchema,
   type ProfileJudgment,
   ProfileJudgmentSchema,
   type RepositoryJudgment,

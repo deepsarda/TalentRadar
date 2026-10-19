@@ -231,6 +231,13 @@ None of these repos may appear in the calibration set (see Risks), or the calibr
 
 **Output schema.** Reasoning always comes before the verdict: `thoughts` before `summary`, a repo's `thoughts` before its `originality`, and per skill **evidence → thought → level**. The level is the last thing written.
 
+Every repository has a required `domains` object with all twelve domain keys. Domain 0 means no
+evidence in the reviewed inputs, with an empty evidence array and a short explanation. Positive
+scores 1–5 require valid citations. Missing domain scores fail validation and retry; they are never
+silently treated as zero. Technologies are reported separately in `skills`. The participant receives
+all twelve domain scores, aggregated from positive repository evidence; zero-evidence repositories
+do not dilute a supported score or increase its confidence.
+
 ```json
 {
   "thoughts": "Consistent ML work across two original repos; frontend is thin. The CV claims Kubernetes, but no repo touches it.",
@@ -240,6 +247,20 @@ None of these repos may appear in the calibration set (see Risks), or the calibr
       "repo": "riya/crop-disease-api",
       "thoughts": "An original API around a standard CNN. The training code is her own; the design is a known pattern.",
       "originality": 4,
+      "domains": {
+        "frontend": { "evidence": [], "thought": "No evidence in these inputs.", "level": 0 },
+        "backend": { "evidence": [], "thought": "No backend implementation supplied.", "level": 0 },
+        "mobile": { "evidence": [], "thought": "No evidence in these inputs.", "level": 0 },
+        "ai_ml": { "evidence": [{ "path": "model/train.py", "note": "Custom training loop" }], "thought": "Substantive model training and evaluation.", "level": 4 },
+        "data": { "evidence": [{ "path": "model/dataset.py", "note": "Dataset loading and augmentation" }], "thought": "Structured data preparation for training.", "level": 3 },
+        "devops_cloud": { "evidence": [], "thought": "No evidence in these inputs.", "level": 0 },
+        "security": { "evidence": [], "thought": "No evidence in these inputs.", "level": 0 },
+        "blockchain_web3": { "evidence": [], "thought": "No evidence in these inputs.", "level": 0 },
+        "systems": { "evidence": [], "thought": "No evidence in these inputs.", "level": 0 },
+        "game_dev": { "evidence": [], "thought": "No evidence in these inputs.", "level": 0 },
+        "embedded_iot": { "evidence": [], "thought": "No evidence in these inputs.", "level": 0 },
+        "design_ui_ux": { "evidence": [], "thought": "No evidence in these inputs.", "level": 0 }
+      },
       "skills": [
         {
           "id": "pytorch",
@@ -271,7 +292,8 @@ None of these repos may appear in the calibration set (see Risks), or the calibr
 | --- | --- | --- |
 | `thoughts` (top level and per repo) | Up to \~60 words | Explanation, not proof: shown under the evidence, and the evidence wins any disagreement |
 | `repos[].originality` | Integer 1–5 | Originality rubric in the taxonomy section |
-| `skills[].id` | Enum of every taxonomy id | A technology or a domain |
+| `repos[].domains` | Every taxonomy domain key, each with evidence, thought, level 0–5 | 0 means no evidence observed; positive scores require valid citations |
+| `skills[].id` | A technology id from the taxonomy | Domain scores live in `domains`; aggregation includes them in the participant profile |
 | `skills[].evidence[].path` | A path that was sent for **that** repo | Checked after the call |
 | `skills[].thought` | Up to \~60 words | Written after the evidence, before the level |
 | `skills[].level` | Integer 1–5 | Proficiency rubric |
@@ -283,11 +305,11 @@ None of these repos may appear in the calibration set (see Risks), or the calibr
 | Setting | Value | Why |
 | --- | --- | --- |
 | Model | `gemini-3.1-flash-lite`, free tier | Demo only, synthetic CVs (paid answer under cost below) |
-| Temperature | 0 | Same input, same answer, as far as the model allows |
+| Temperature | Model default | Avoid overriding the pinned Gemini 3 model's recommended sampling behavior; immutable caching prevents re-rolling |
 | Output | Structured JSON with the schema above | No regex-parsing JSON out of prose |
-| Native thinking | High initially, low on retry | Keep the evidence review workflow while reserving more generation capacity for delivery on retries |
+| Native thinking | Medium, including retries | Leave generation capacity for the complete domain and technology assessment |
 | `maxOutputTokens` | 65,536 | Shared by native thinking and visible JSON; structured output can still be cut off at this limit |
-| `promptVersion` | Stored with every result, e.g. `"v5"` | Changing the prompt invalidates the cache on purpose |
+| `promptVersion` | Stored with every result, e.g. `"v6"` | Changing the prompt invalidates the cache on purpose |
 
 > **Day 2 test: key order.** Gemini's structured-output docs don't promise that the response follows the schema's key order. Earlier Gemini versions sorted keys alphabetically — which puts `level` before `thought` and `summary` before `thoughts`: the verdict before the reasoning. Check the raw response string with the pinned model before building on it.
 
@@ -297,7 +319,7 @@ None of these repos may appear in the calibration set (see Risks), or the calibr
 - Unknown ids and out-of-range numbers are dropped (the backstop behind the enum).
 - A broken repo block is dropped; the rest of the profile survives.
 - Check the provider's finish reason before JSON parsing. Record finish reason, response length and output/thinking token counts in the build log. Reject token-limited, blocked or otherwise unfinished responses even when their text happens to parse.
-- Incomplete output, unparseable JSON or missing top-level fields trigger a **retry, at most 2**. Retries request fresh compact JSON and lower native thinking, preserving every repository and all evidence. Never fabricate missing JSON fields or save a repaired partial assessment. After retries, the profile is `failed`, with the reason shown.
+- Incomplete output, unparseable JSON or missing top-level fields trigger a **retry, at most 2**. Retries request fresh compact JSON, preserving medium native thinking, every repository and all evidence. Never fabricate missing JSON fields or save a repaired partial assessment. After retries, the profile is `failed`, with the reason shown.
 - Two teammates who share a repo may get different scores for it. That is accepted for the demo.
 
 > **Claimed vs. evidenced.** Code compares `cv.claims` with the repo skills. If a CV says "Kubernetes expert" and no repo touches Kubernetes, the organizer sees a neutral note: *claimed on CV, no code evidence*. It is a prompt to look closer, not an accusation.

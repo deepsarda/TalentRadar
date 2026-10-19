@@ -57,6 +57,24 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("judge response completion", () => {
+  it("distinguishes SDK response decoding failures from invalid assessment JSON", async () => {
+    const { ai, generateContent } = clientFor(responseWith(undefined));
+    generateContent.mockRejectedValue(new SyntaxError("Unterminated string: private-canary-name"));
+    const outcome = judgeProfile({
+      ai,
+      model: "test",
+      repositories: [repository],
+      cv: noCv,
+      pages: [],
+      attempt: 1,
+    });
+    await expect(outcome).rejects.toThrow(
+      /transport returned invalid response JSON before completion metadata/,
+    );
+    await expect(outcome).rejects.not.toThrow("private-canary-name");
+    expect(settle).not.toHaveBeenCalled();
+  });
+
   it.each(["unfinished", "parseable"])(
     "rejects a %s token-limited answer before accepting any assessment",
     async (kind) => {
@@ -163,7 +181,7 @@ describe("judge response completion", () => {
       attempt: 1,
     });
     expect(result.rawText).toBe(text);
-    expect(result.result.repos[0]?.skills).toHaveLength(19);
+    expect(result.result.repos[0]?.skills.filter((skill) => skill.level > 0)).toHaveLength(19);
     expect(result.diagnostics).toMatchObject({
       finishReason: FinishReason.STOP,
       outputTokens: 2500,
@@ -171,21 +189,30 @@ describe("judge response completion", () => {
     });
   });
 
-  it("changes retry delivery and thinking while preserving all six repositories and their files", async () => {
+  it("requests compact retry delivery while preserving review depth, all six repositories and their files", async () => {
     const repositories = Array.from({ length: 6 }, (_, index) => ({
       ...repository,
       repository: `example/project-${index}`,
     }));
     const { ai, generateContent } = clientFor(
-      responseWith(JSON.stringify({ ...expected, repos: [] }), FinishReason.STOP),
+      responseWith(
+        JSON.stringify({
+          ...expected,
+          repos: repositories.map((facts) => ({
+            ...(expected.repos[0] as Record<string, unknown>),
+            repo: facts.repository,
+          })),
+        }),
+        FinishReason.STOP,
+      ),
     );
     for (const attempt of [1, 2]) {
       await judgeProfile({ ai, model: "test", repositories, cv: noCv, pages: [], attempt });
     }
     const first = generateContent.mock.calls[0]?.[0];
     const retry = generateContent.mock.calls[1]?.[0];
-    expect(first.config.thinkingConfig.thinkingLevel).toBe(ThinkingLevel.HIGH);
-    expect(retry.config.thinkingConfig.thinkingLevel).toBe(ThinkingLevel.LOW);
+    expect(first.config.thinkingConfig.thinkingLevel).toBe(ThinkingLevel.MEDIUM);
+    expect(retry.config.thinkingConfig.thinkingLevel).toBe(ThinkingLevel.MEDIUM);
     expect(retry.config.maxOutputTokens).toBe(65_536);
     expect(retry.contents[0].text).toContain("DELIVERY RETRY");
     for (const facts of repositories) {
