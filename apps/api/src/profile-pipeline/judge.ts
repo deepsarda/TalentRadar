@@ -7,6 +7,7 @@ import {
 import {
   type DetectedTool,
   DomainScoresSchema,
+  NO_DOMAIN_EVIDENCE,
   originalityRubric,
   type ProfileJudgment,
   ProfileJudgmentSchema,
@@ -142,18 +143,20 @@ export const RawResponseSchema = z.object({
 export function responseSchema() {
   const flags = ["possible_prompt_injection", "readme_overclaims", "mostly_boilerplate"];
   const domainIds = Object.keys(taxonomy.domains);
-  const domainScore = {
+  const evidenceItems = {
+    type: "object",
+    required: ["path", "note"],
+    properties: { path: { type: "string" }, note: { type: "string" } },
+  };
+  const supportedDomain = {
     type: "object",
     propertyOrdering: ["evidence", "thought", "level"],
     required: ["evidence", "thought", "level"],
     properties: {
       evidence: {
         type: "array",
-        items: {
-          type: "object",
-          required: ["path", "note"],
-          properties: { path: { type: "string" }, note: { type: "string" } },
-        },
+        minItems: 1,
+        items: evidenceItems,
       },
       thought: {
         type: "string",
@@ -161,12 +164,27 @@ export function responseSchema() {
       },
       level: {
         type: "integer",
-        minimum: 0,
+        minimum: 1,
         maximum: 5,
         description:
           "0 means no evidence observed; 1-5 use the proficiency rubric and require a cited path.",
       },
     },
+  };
+  const domainScore = {
+    anyOf: [
+      {
+        type: "object",
+        propertyOrdering: ["evidence", "thought", "level"],
+        required: ["evidence", "thought", "level"],
+        properties: {
+          evidence: { type: "array", maxItems: 0, items: evidenceItems },
+          thought: { type: "string", enum: [NO_DOMAIN_EVIDENCE] },
+          level: { type: "integer", enum: [0] },
+        },
+      },
+      supportedDomain,
+    ],
   };
   return {
     type: "object",
@@ -387,13 +405,15 @@ export function sanitizeResponse(
   const flags = new Set(response.flags);
   if (cv.possiblePromptInjection) flags.add("possible_prompt_injection");
   const seenRepositories = new Set<string>();
-  const repos = response.repos.flatMap((candidate) => {
+  const repos = response.repos.flatMap((candidate, index) => {
     const parsed = RawRepositorySchema.safeParse(candidate);
-    if (!parsed.success) return [];
+    if (!parsed.success)
+      throw new JudgeValidationError(validationIssues(parsed.error, `repos[${index}]`));
     const repository = facts.get(parsed.data.repo);
-    if (!repository?.included) return [];
+    if (!repository?.included)
+      throw new JudgeValidationError([`repos[${index}].repo: unknown_repository`]);
     if (seenRepositories.has(repository.repository))
-      throw new Error("Duplicate repository assessment");
+      throw new JudgeValidationError([`repos[${index}].repo: duplicate_repository`]);
     seenRepositories.add(repository.repository);
     // Citable: files whose contents were sent, the README, any file listed in the tree (a real
     // tracked file, e.g. a Kotlin source that wasn't sampled), and any real folder: one that some
@@ -424,7 +444,9 @@ export function sanitizeResponse(
         return path ? [{ ...item, path }] : [];
       });
       if (score.level > 0 && evidence.length === 0)
-        throw new Error("Positive domain score has no valid evidence");
+        throw new JudgeValidationError([
+          `repos[${index}].domains.${id}.evidence: no valid evidence paths`,
+        ]);
       return { id, ...score, evidence };
     });
     for (const flag of parsed.data.flags) flags.add(flag);
@@ -440,7 +462,9 @@ export function sanitizeResponse(
     ];
   });
   if (seenRepositories.size !== facts.size)
-    throw new Error("Every repository requires a complete assessment of all domains");
+    throw new JudgeValidationError([
+      "repos: missing_repository (every repository requires all domains)",
+    ]);
   const claims = response.cv.claims.flatMap((candidate) => {
     const claim = RawClaimSchema.safeParse(candidate);
     return claim.success && knownIds.has(claim.data.id) ? [claim.data] : [];
@@ -452,6 +476,22 @@ export function sanitizeResponse(
     cv: { claims },
     flags: [...flags],
   });
+}
+
+/** Schema paths and rule names are safe to log; model prose and rejected values are not. */
+function validationIssues(error: z.ZodError, prefix: string): string[] {
+  return error.issues.map((issue) => {
+    const field = issue.path.length > 0 ? `.${issue.path.join(".")}` : "";
+    const rule = issue.code === "custom" ? "score_evidence_mismatch" : issue.code;
+    return `${prefix}${field}: ${rule}`;
+  });
+}
+
+export class JudgeValidationError extends Error {
+  constructor(readonly issues: string[]) {
+    super(issues.slice(0, 3).join("; "));
+    this.name = "JudgeValidationError";
+  }
 }
 
 /*
@@ -579,8 +619,15 @@ export async function judgeProfile(
       rawText,
       diagnostics,
     };
-  } catch {
-    throw new JudgeOutputError("returned incomplete or invalid domain assessments", diagnostics);
+  } catch (error) {
+    const issues =
+      error instanceof JudgeValidationError
+        ? error.issues
+        : error instanceof z.ZodError
+          ? validationIssues(error, "assessment")
+          : null;
+    if (!issues) throw error;
+    throw new JudgeOutputError(`failed validation (${issues.slice(0, 3).join("; ")})`, diagnostics);
   }
 }
 

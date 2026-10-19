@@ -1,4 +1,4 @@
-import { taxonomy } from "@talentradar/shared";
+import { NO_DOMAIN_EVIDENCE, taxonomy } from "@talentradar/shared";
 import type { RawJudgeResponse, RepositoryPromptInput } from "./judge.js";
 
 /*
@@ -1543,7 +1543,7 @@ function withAllDomains(shot: FewShot): FewShot {
                 id,
                 score
                   ? { evidence: score.evidence, thought: score.thought, level: score.level }
-                  : { evidence: [], thought: "No evidence in the supplied inputs.", level: 0 },
+                  : { evidence: [], thought: NO_DOMAIN_EVIDENCE, level: 0 },
               ];
             }),
           ),

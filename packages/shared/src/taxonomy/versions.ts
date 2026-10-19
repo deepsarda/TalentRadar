@@ -14,7 +14,7 @@ export const taxonomyVersion = taxonomy.version;
 export const rubricVersion = "v1";
 
 /** Bump when the judge prompt (judge.ts instructions or few-shot.ts examples) changes. */
-export const promptVersion = "v6";
+export const promptVersion = "v7";
 
 /**
  * Bump when stage-2 extraction changes what the judge is sent: file sampling in

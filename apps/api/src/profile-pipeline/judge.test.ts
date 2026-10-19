@@ -20,18 +20,23 @@ import {
  * Bump promptVersion in packages/shared/src/taxonomy/versions.ts, then record both values here.
  */
 const pinnedPrompt = {
-  version: "v6",
-  fingerprint: "ac60a17923a1ac8a574ea1f9c11c90106107aacac40bc21e3367c8b7e65d500a",
+  version: "v7",
+  fingerprint: "7bd3aea63e1b616228ad8fcee9901d4ddab6d814e2eca3be2ae86bb87a88382f",
 };
 
 interface SchemaNode {
   propertyOrdering?: string[];
   properties?: Record<string, SchemaNode>;
   items?: SchemaNode;
+  anyOf?: SchemaNode[];
 }
 
 /** Fails when an object's keys are not in the schema's reasoning-before-verdict order. */
 function expectKeyOrder(value: unknown, schema: SchemaNode, at: string): void {
+  if (schema.anyOf?.[0]) {
+    expectKeyOrder(value, schema.anyOf[0], at);
+    return;
+  }
   if (Array.isArray(value)) {
     value.forEach((item, index) => {
       if (schema.items) expectKeyOrder(item, schema.items, `${at}[${index}]`);
@@ -260,10 +265,11 @@ describe("mandatory domain assessment", () => {
     expect(schema.domains.required).toEqual(domainIds);
     expect(Object.keys(schema.domains.properties)).toEqual(domainIds);
     expect(schema.domains.additionalProperties).toBe(false);
-    expect(schema.domains.properties["frontend"]?.properties.level).toMatchObject({
-      minimum: 0,
-      maximum: 5,
-    });
+    const variants = schema.domains.properties["frontend"]?.anyOf;
+    expect(variants?.[0]?.properties.level).toMatchObject({ enum: [0] });
+    expect(variants?.[0]?.properties.evidence).toMatchObject({ maxItems: 0 });
+    expect(variants?.[1]?.properties.level).toMatchObject({ minimum: 1, maximum: 5 });
+    expect(variants?.[1]?.properties.evidence).toMatchObject({ minItems: 1 });
   });
 
   it("keeps every explicit domain score, including zeros, in the validated repository", () => {
@@ -277,9 +283,9 @@ describe("mandatory domain assessment", () => {
   it("rejects missing domain scores and missing repository assessments rather than inventing zeros", () => {
     const raw = changed();
     delete raw.repos[0]?.domains["security"];
-    expect(() => sanitizeResponse(raw, [facts], noCv)).toThrow(/Every repository requires/);
+    expect(() => sanitizeResponse(raw, [facts], noCv)).toThrow(/domains.security: invalid_type/);
     expect(() => sanitizeResponse({ ...shot.expected, repos: [] }, [facts], noCv)).toThrow(
-      /Every repository requires/,
+      /missing_repository/,
     );
   });
 

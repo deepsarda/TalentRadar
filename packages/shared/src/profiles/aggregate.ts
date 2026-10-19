@@ -11,6 +11,8 @@ const JudgmentEvidenceSchema = z.object({
   note: z.string().min(1).max(500),
 });
 
+export const NO_DOMAIN_EVIDENCE = "No evidence in the reviewed inputs.";
+
 export const DomainScoreSchema = z
   .object({
     evidence: z.array(JudgmentEvidenceSchema),

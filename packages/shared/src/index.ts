@@ -4,6 +4,7 @@ export {
   type DetectedTool,
   DomainScoreSchema,
   DomainScoresSchema,
+  NO_DOMAIN_EVIDENCE,
   type ProfileJudgment,
   ProfileJudgmentSchema,
   type RepositoryJudgment,

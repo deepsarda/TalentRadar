@@ -189,6 +189,28 @@ describe("judge response completion", () => {
     });
   });
 
+  it("identifies the invalid domain field without logging the rejected value", async () => {
+    const raw = structuredClone(expected);
+    const repo = raw.repos[0] as {
+      domains: Record<string, { level: number; thought: string; evidence: unknown[] }>;
+    };
+    const backend = repo.domains["backend"];
+    if (!backend) throw new Error("fixture requires backend");
+    backend.evidence = [];
+    backend.thought = "private-canary-name";
+    const { ai } = clientFor(responseWith(JSON.stringify(raw), FinishReason.STOP));
+    const outcome = judgeProfile({
+      ai,
+      model: "test",
+      repositories: [repository],
+      cv: noCv,
+      pages: [],
+      attempt: 1,
+    });
+    await expect(outcome).rejects.toThrow(/repos\[0\].domains.backend: score_evidence_mismatch/);
+    await expect(outcome).rejects.not.toThrow("private-canary-name");
+  });
+
   it("requests compact retry delivery while preserving review depth, all six repositories and their files", async () => {
     const repositories = Array.from({ length: 6 }, (_, index) => ({
       ...repository,

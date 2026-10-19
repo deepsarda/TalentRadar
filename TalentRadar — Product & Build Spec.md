@@ -309,7 +309,7 @@ do not dilute a supported score or increase its confidence.
 | Output | Structured JSON with the schema above | No regex-parsing JSON out of prose |
 | Native thinking | Medium, including retries | Leave generation capacity for the complete domain and technology assessment |
 | `maxOutputTokens` | 65,536 | Shared by native thinking and visible JSON; structured output can still be cut off at this limit |
-| `promptVersion` | Stored with every result, e.g. `"v6"` | Changing the prompt invalidates the cache on purpose |
+| `promptVersion` | Stored with every result, e.g. `"v7"` | Changing the prompt invalidates the cache on purpose |
 
 > **Day 2 test: key order.** Gemini's structured-output docs don't promise that the response follows the schema's key order. Earlier Gemini versions sorted keys alphabetically — which puts `level` before `thought` and `summary` before `thoughts`: the verdict before the reasoning. Check the raw response string with the pinned model before building on it.
 
@@ -317,7 +317,7 @@ do not dilute a supported score or increase its confidence.
 
 - A skill whose evidence path wasn't sent for that repo is dropped. A skill left with no valid evidence is dropped.
 - Unknown ids and out-of-range numbers are dropped (the backstop behind the enum).
-- A broken repo block is dropped; the rest of the profile survives.
+- Each repository must include all domain scores. The provider schema uses `anyOf` to require either zero with empty evidence or 1–5 with at least one citation. Local validation checks citation paths; missing or invalid domain assessments trigger a retry, with exact field/rule diagnostics instead of a generic failure.
 - Check the provider's finish reason before JSON parsing. Record finish reason, response length and output/thinking token counts in the build log. Reject token-limited, blocked or otherwise unfinished responses even when their text happens to parse.
 - Incomplete output, unparseable JSON or missing top-level fields trigger a **retry, at most 2**. Retries request fresh compact JSON, preserving medium native thinking, every repository and all evidence. Never fabricate missing JSON fields or save a repaired partial assessment. After retries, the profile is `failed`, with the reason shown.
 - Two teammates who share a repo may get different scores for it. That is accepted for the demo.

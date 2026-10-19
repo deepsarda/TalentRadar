@@ -60,6 +60,9 @@ Every repository assessment must score all 12 domains in a required `domains` ob
 means no evidence in the reviewed inputs; 1–5 requires valid file evidence. Missing domains or
 unsupported positive scores reject the assessment. Participant profiles include every domain,
 and repositories with no evidence do not dilute positive scores or increase confidence.
+The provider schema enforces the score/evidence choice with `anyOf`: zero with no citations, or
+1–5 with at least one citation. Local validation additionally verifies paths and reports the exact
+field and rule when an assessment fails.
 
 The worker records Gemini's finish reason, output length and output/thinking token counts before
 parsing the assessment. Truncated or blocked responses are rejected even if they contain a
