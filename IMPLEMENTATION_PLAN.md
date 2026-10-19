@@ -519,14 +519,15 @@ Implement the four specification stages without merging responsibilities.
 ### LLM judgment
 
 - One structured call per participant containing all selected repositories and CV inputs.
-- Temperature 0, pinned model, prompt version, taxonomy version, and 16,000 output-token limit.
+- Temperature 0, pinned model, prompt version, taxonomy version, and 65,536 combined output/thinking-token limit.
 - Fixed prefix contains the full review workflow, taxonomy with aliases, rubrics, five domain-diverse calibration examples and a sixth example for broad technology coverage.
 - Reconcile each language and detector hint against citable evidence, assess every supported tool and area, and audit coverage before returning the result.
 - Reasoning fields precede verdict fields as far as the provider allows; test raw key order with the pinned model.
 - Validate repository blocks independently.
 - Drop citations to files that were not supplied.
 - Drop unknown ids and invalid values.
-- Retry only unparseable/missing-top-level output, at most twice.
+- Check the provider finish reason before parsing and record response length and output/thinking token counts in progress logs.
+- Retry incomplete, unparseable or missing-top-level output at most twice, using compact explanations and lower native thinking while keeping the complete evidence and repository set.
 
 ### Aggregation and caching
 

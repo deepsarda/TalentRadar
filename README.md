@@ -56,6 +56,12 @@ using the configured taxonomy's ids and aliases. Six synthetic examples calibrat
 demonstrate secondary technology coverage. Declaring a dependency establishes presence, not
 advanced proficiency. Prompt and sampler versions invalidate assessments cached under older rules.
 
+The worker records Gemini's finish reason, output length and output/thinking token counts before
+parsing the assessment. Truncated or blocked responses are rejected even if they contain a
+parseable JSON prefix. A retry requests compact explanations and uses lower native thinking to
+leave more of the shared output budget for the complete JSON, keeping every repository and its
+evidence. Structured output still requires completion checks and application validation.
+
 ## Free deployment
 
 The repository deploys as one Docker service on Render. Express serves the built React app from the same origin, avoiding CORS and cross-site session-cookie setup. MongoDB Atlas M0 supplies durable storage.

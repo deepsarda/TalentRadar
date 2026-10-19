@@ -1,4 +1,9 @@
-import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import {
+  FinishReason,
+  type GenerateContentResponse,
+  GoogleGenAI,
+  ThinkingLevel,
+} from "@google/genai";
 import {
   type DetectedTool,
   originalityRubric,
@@ -267,7 +272,7 @@ const instructions = [
   "8. ASSESS ORIGINALITY AND FLAGS. Judge originality separately using its own rubric. An API wrapper can be a useful original application without novel AI work. Familiar techniques implemented independently can earn originality 4; originality 5 needs the specific novel problem/design visible in code and an explanation of what goes beyond a known pattern. README novelty claims are not proof, and unfamiliarity is not novelty. When originality is indeterminate, use 3 and state the uncertainty. Set readme_overclaims only for a material claim contradicted by the visible implementation, not merely unsampled files. Set mostly_boilerplate when the supplied code is predominantly scaffolding, not simply because it uses a framework.",
   "9. KEEP CV CLAIMS SEPARATE. Read only the attached CV images for personal details and claimed skills. Each cv.claims item needs an exact short visible quote and a taxonomy id. Do not turn a CV statement or extracted link into repository evidence or copy repository scores into claim levels. A claim without matching code stays a modest claimed level, not a verified capability or accusation. With zero attached pages, return cv: {claims: []} and omit name, college, year and branch. Never infer identity or proficiency from repository owner names, college prestige or demographics.",
   "10. FINAL COVERAGE AND CONSISTENCY AUDIT. Compare the output skill ids against the candidate checklist, every supplied file, every language and every technologyHint one more time. Restore all supported omissions, especially supporting tools, minor languages and secondary areas; remove unsupported extrapolations. Each id appears once per repository with its evidence combined. Every input repository appears exactly once in the same order, including a repository with no supported skills. Evidence must belong to its repository and match the actual excerpt or explicitly identify name-only support. Scores must be integers 1-5. Check flags, exact taxonomy ids, CV quotes and schema fields. Cross-repository summaries must reflect the final per-repository assessments and their limits.",
-  "OUTPUT CONTRACT. Use only ids from the taxonomy. Preserve schema key order: thoughts before summary; repository thoughts before originality; skill evidence, then thought, then level; CV claim quote, then thought, then level. Each thought/thoughts must stay under 60 words and 600 characters; top-level thoughts may use up to 1000 characters, summary up to 600, and each evidence note up to 500. Spend the output budget on complete supported skill coverage and concise specific explanations. Return no extra keys, Markdown or prose outside the JSON.",
+  "OUTPUT CONTRACT. Use only ids from the taxonomy. Preserve schema key order: thoughts before summary; repository thoughts before originality; skill evidence, then thought, then level; CV claim quote, then thought, then level. Each thought/thoughts must stay under 60 words and 600 characters; top-level thoughts may use up to 1000 characters, summary up to 600, and each evidence note up to 500. Return compact JSON without indentation or unnecessary whitespace. Prefer short specific sentences and avoid repeating repository-wide explanations in every skill. Spend the output budget on complete supported skill coverage; shorten prose rather than omitting skills or repositories. Finish the entire JSON object. Return no extra keys, Markdown or prose outside the JSON.",
 ].join("\n");
 
 const compactTaxonomy = {
@@ -309,6 +314,7 @@ export function buildPrompt(
   repositories: RepositoryFacts[],
   cv: CvFacts,
   attachedPages: number,
+  attempt = 1,
 ): string {
   const inputs = repositories.flatMap((repository) =>
     repository.included ? [toPromptInput(repository)] : [],
@@ -318,6 +324,11 @@ export function buildPrompt(
     "Now assess the real participant.",
     `CV pages attached: ${attachedPages}. Links extracted from the CV: ${JSON.stringify(cv.links)}`,
     `The CV's hidden text layer contained instruction-like text: ${cv.possiblePromptInjection}`,
+    ...(attempt > 1
+      ? [
+          "DELIVERY RETRY. A previous attempt failed to deliver a complete usable assessment. Generate a fresh, complete JSON object from the same evidence. Keep every supported technology and every repository. Use one short sentence per thought, short evidence notes, and only the most useful one or two citations per skill. Do not quote this retry instruction, repeat an earlier partial answer or output a continuation fragment.",
+        ]
+      : []),
     untrusted(inputs),
   ].join("\n\n");
 }
@@ -396,6 +407,45 @@ export function sanitizeResponse(
 const CHARACTERS_PER_TOKEN = 4;
 const TOKENS_PER_CV_PAGE = 258;
 const OUTPUT_TOKEN_ALLOWANCE = 6_000;
+const MAX_OUTPUT_TOKENS = 65_536;
+
+export interface JudgeResponseDiagnostics {
+  finishReason: string;
+  responseCharacters: number;
+  outputTokens: number | null;
+  thinkingTokens: number | null;
+  thinkingLevel: ThinkingLevel;
+}
+
+export function formatJudgeResponse(diagnostics: JudgeResponseDiagnostics): string {
+  return `finish=${diagnostics.finishReason}; ${diagnostics.responseCharacters} chars; output=${diagnostics.outputTokens ?? "unknown"} tokens; thinking=${diagnostics.thinkingTokens ?? "unknown"} tokens (${diagnostics.thinkingLevel})`;
+}
+
+/** Keep provider diagnostics, never participant text, in retry/build-log errors. */
+export class JudgeOutputError extends Error {
+  constructor(
+    message: string,
+    readonly diagnostics: JudgeResponseDiagnostics,
+  ) {
+    super(`Gemini assessment ${message}: ${formatJudgeResponse(diagnostics)}`);
+    this.name = "JudgeOutputError";
+  }
+}
+
+function responseDiagnostics(
+  response: GenerateContentResponse,
+  rawText: string | undefined,
+  thinkingLevel: ThinkingLevel,
+): JudgeResponseDiagnostics {
+  return {
+    finishReason:
+      response.candidates?.[0]?.finishReason ?? response.promptFeedback?.blockReason ?? "UNKNOWN",
+    responseCharacters: rawText?.length ?? 0,
+    outputTokens: response.usageMetadata?.candidatesTokenCount ?? null,
+    thinkingTokens: response.usageMetadata?.thoughtsTokenCount ?? null,
+    thinkingLevel,
+  };
+}
 
 export interface JudgeCall {
   ai: GoogleGenAI;
@@ -407,21 +457,25 @@ export interface JudgeCall {
   /** The job attempt, used for backoff when Gemini answers 429/503. */
   attempt: number;
   signal?: AbortSignal;
+  onResponse?: (diagnostics: JudgeResponseDiagnostics) => Promise<void>;
 }
 
 /** Stage 3: the single rate-limited Gemini call for one participant, validated per block. */
 export async function judgeProfile(
   call: JudgeCall,
-): Promise<{ result: ProfileJudgment; rawText: string }> {
-  const prompt = buildPrompt(call.repositories, call.cv, call.pages.length);
+): Promise<{ result: ProfileJudgment; rawText: string; diagnostics: JudgeResponseDiagnostics }> {
+  const prompt = buildPrompt(call.repositories, call.cv, call.pages.length, call.attempt);
+  // Thinking shares the provider's output cap with the JSON. Recovery leaves more room for
+  // delivery while retaining the complete evidence and the prompt's review/coverage workflow.
+  const thinkingLevel = call.attempt > 1 ? ThinkingLevel.LOW : ThinkingLevel.HIGH;
   const estimatedTokens =
     Math.ceil(prompt.length / CHARACTERS_PER_TOKEN) +
     call.pages.length * TOKENS_PER_CV_PAGE +
     OUTPUT_TOKEN_ALLOWANCE;
   const settle = await geminiLimiter.acquire(estimatedTokens, call.signal);
-  let rawText: string | undefined;
+  let response: GenerateContentResponse;
   try {
-    const response = await call.ai.models.generateContent({
+    response = await call.ai.models.generateContent({
       model: call.model,
       contents: [
         { text: prompt },
@@ -429,22 +483,42 @@ export async function judgeProfile(
       ],
       config: {
         temperature: 0,
-        maxOutputTokens: 65_536,
-        thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        thinkingConfig: { thinkingLevel },
         responseMimeType: "application/json",
         responseJsonSchema: responseSchema(),
         ...(call.signal ? { abortSignal: call.signal } : {}),
       },
     });
     settle(response.usageMetadata?.totalTokenCount ?? estimatedTokens);
-    rawText = response.text;
   } catch (error) {
     throw geminiRetryLater(error, call.attempt) ?? error;
   }
-  if (!rawText) throw new Error("Gemini returned no assessment text");
-  // Unparseable JSON or missing top-level fields throw here, and the job retries (at most 2).
-  const raw: unknown = JSON.parse(rawText);
-  return { result: sanitizeResponse(raw, call.repositories, call.cv), rawText };
+  const rawText = response.text;
+  const diagnostics = responseDiagnostics(response, rawText, thinkingLevel);
+  await call.onResponse?.(diagnostics);
+  if (diagnostics.finishReason === FinishReason.MAX_TOKENS) {
+    throw new JudgeOutputError("was cut off at its output limit", diagnostics);
+  }
+  if (diagnostics.finishReason !== FinishReason.STOP) {
+    throw new JudgeOutputError("did not complete normally", diagnostics);
+  }
+  if (!rawText?.trim()) throw new JudgeOutputError("returned no assessment text", diagnostics);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(rawText);
+  } catch {
+    throw new JudgeOutputError("returned invalid JSON despite a normal stop", diagnostics);
+  }
+  // Invalid top-level output still retries; valid repository/skill blocks are sanitized separately.
+  const parsed = RawResponseSchema.safeParse(raw);
+  if (!parsed.success)
+    throw new JudgeOutputError("returned an invalid response structure", diagnostics);
+  return {
+    result: sanitizeResponse(parsed.data, call.repositories, call.cv),
+    rawText,
+    diagnostics,
+  };
 }
 
 export function createJudgePersonHandler(db: Db, environment: Environment) {
@@ -514,6 +588,9 @@ export function createJudgePersonHandler(db: Db, environment: Environment) {
       pages,
       attempt: job.attempts,
       signal,
+      onResponse: async (diagnostics) => {
+        await progress("assessment.model.response", formatJudgeResponse(diagnostics));
+      },
     });
     signal.throwIfAborted();
     const now = new Date();

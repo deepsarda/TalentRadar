@@ -285,9 +285,9 @@ None of these repos may appear in the calibration set (see Risks), or the calibr
 | Model | `gemini-3.1-flash-lite`, free tier | Demo only, synthetic CVs (paid answer under cost below) |
 | Temperature | 0 | Same input, same answer, as far as the model allows |
 | Output | Structured JSON with the schema above | No regex-parsing JSON out of prose |
-| Native thinking | Lowest available | The reasoning is already visible in `thoughts`; hidden thinking would pay for it twice |
-| `maxOutputTokens` | 16,000 | Room for \~6k tokens of output, so one rambling thought can't cut the JSON off |
-| `promptVersion` | Stored with every result, e.g. `"v3"` | Changing the prompt invalidates the cache on purpose |
+| Native thinking | High initially, low on retry | Keep the evidence review workflow while reserving more generation capacity for delivery on retries |
+| `maxOutputTokens` | 65,536 | Shared by native thinking and visible JSON; structured output can still be cut off at this limit |
+| `promptVersion` | Stored with every result, e.g. `"v5"` | Changing the prompt invalidates the cache on purpose |
 
 > **Day 2 test: key order.** Gemini's structured-output docs don't promise that the response follows the schema's key order. Earlier Gemini versions sorted keys alphabetically — which puts `level` before `thought` and `summary` before `thoughts`: the verdict before the reasoning. Check the raw response string with the pinned model before building on it.
 
@@ -296,7 +296,8 @@ None of these repos may appear in the calibration set (see Risks), or the calibr
 - A skill whose evidence path wasn't sent for that repo is dropped. A skill left with no valid evidence is dropped.
 - Unknown ids and out-of-range numbers are dropped (the backstop behind the enum).
 - A broken repo block is dropped; the rest of the profile survives.
-- Only unparseable JSON or missing top-level fields trigger a **retry, at most 2**. After that the profile is `failed`, with the reason shown.
+- Check the provider's finish reason before JSON parsing. Record finish reason, response length and output/thinking token counts in the build log. Reject token-limited, blocked or otherwise unfinished responses even when their text happens to parse.
+- Incomplete output, unparseable JSON or missing top-level fields trigger a **retry, at most 2**. Retries request fresh compact JSON and lower native thinking, preserving every repository and all evidence. Never fabricate missing JSON fields or save a repaired partial assessment. After retries, the profile is `failed`, with the reason shown.
 - Two teammates who share a repo may get different scores for it. That is accepted for the demo.
 
 > **Claimed vs. evidenced.** Code compares `cv.claims` with the repo skills. If a CV says "Kubernetes expert" and no repo touches Kubernetes, the organizer sees a neutral note: *claimed on CV, no code evidence*. It is a prompt to look closer, not an accusation.
