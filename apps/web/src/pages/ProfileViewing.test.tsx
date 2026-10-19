@@ -72,6 +72,64 @@ it("opens a participant profile from the participants page", async () => {
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
 
+it("opens team and individual member profiles from the Teams page", async () => {
+  const api = mockApi({
+    "/api/organizer/events/evt": { event: { id: "evt", name: "Build Night" } },
+    "/api/organizer/events/evt/operations": {
+      participants: [],
+      teams: [
+        {
+          id: "team",
+          name: "Null Pointers",
+          captainId: "riya",
+          status: "submitted",
+          members: [
+            { id: "riya", name: "Riya Patel", github: "riya", profileStatus: "ready" },
+            { id: "dev", name: "Dev", github: "dev", profileStatus: "building" },
+          ],
+        },
+      ],
+    },
+    "/api/organizer/events/evt/participants/riya/profile": profileFixture,
+    "/api/organizer/events/evt/participants/dev/profile": {
+      person: { personId: "dev", name: "Dev", github: "dev" },
+      profile: { ...profileFixture.profile, status: "building", displayName: "Dev" },
+    },
+  });
+  showPage(
+    "/organizer/events/evt/teams",
+    "organizer/events/:eventId/teams",
+    <EventSectionPage section="teams" />,
+  );
+  const teamButton = await screen.findByRole("button", { name: "Null Pointers" });
+  teamButton.focus();
+  fireEvent.click(teamButton);
+  const teamModal = screen.getByRole("dialog", { name: "Null Pointers · profiles" });
+  expect(await within(teamModal).findByText("Original work")).toBeInTheDocument();
+  fireEvent.click(within(teamModal).getByRole("button", { name: "Dev" }));
+  expect(
+    await within(teamModal).findByText(/This profile is still being built/),
+  ).toBeInTheDocument();
+  fireEvent.click(within(teamModal).getByRole("button", { name: "Close" }));
+  expect(teamButton).toHaveFocus();
+
+  fireEvent.click(screen.getByRole("button", { name: "Dev" }));
+  const memberModal = screen.getByRole("dialog", { name: "Dev · profile" });
+  expect(
+    await within(memberModal).findByText(/This profile is still being built/),
+  ).toBeInTheDocument();
+  expect(
+    within(memberModal).queryByRole("navigation", { name: "Team member profiles" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(within(memberModal).getByRole("button", { name: "Close" }));
+
+  fireEvent.click(screen.getByRole("row", { name: /Null Pointers/ }));
+  expect(screen.getByRole("dialog", { name: "Null Pointers · profiles" })).toBeInTheDocument();
+  expect(api.mock.calls.some(([path]) => String(path).endsWith("/participants/dev/profile"))).toBe(
+    true,
+  );
+});
+
 it("opens the team's profiles from shortlisting, switches members, and restores focus after Escape", async () => {
   const ranking = {
     requirements: [
