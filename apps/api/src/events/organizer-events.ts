@@ -21,6 +21,7 @@ import type {
   UserDocument,
 } from "../database/models.js";
 import { collections } from "../database/mongo.js";
+import { serializeProfile } from "../participants/profile-view.js";
 import { diffSummary, listAudit, recordAudit } from "./audit.js";
 
 const LinksSchema = z
@@ -617,6 +618,54 @@ export function createOrganizerEventsApi(db: Db, authentication: Authentication)
           })),
         });
       });
+
+      app.get(
+        "/api/organizer/events/:eventId/participants/:personId/profile",
+        async (request, response) => {
+          const owned = await ownedEvent(request, response);
+          if (!owned) return;
+          const personId = parseObjectId(request.params.personId ?? "");
+          const registration = personId
+            ? await db.collection<RegistrationDocument>(collections.registrations).findOne({
+                hackathonId: owned.event._id,
+                personId,
+              })
+            : null;
+          if (!registration || !personId) {
+            response.status(404).json({
+              error: "participant_not_found",
+              message: "Participant not found in this event",
+            });
+            return;
+          }
+          const [person, profile] = await Promise.all([
+            db.collection<PersonDocument>(collections.people).findOne({ _id: personId }),
+            db
+              .collection<ProfileDocument>(collections.profiles)
+              .find({ personId })
+              .sort({ version: -1 })
+              .limit(1)
+              .next(),
+          ]);
+          if (!person) {
+            response
+              .status(404)
+              .json({ error: "participant_not_found", message: "Participant not found" });
+            return;
+          }
+          response.json({
+            person: {
+              personId: personId.toHexString(),
+              name: person.name,
+              github: person.github,
+              college: person.college,
+              year: person.year,
+              branch: person.branch,
+            },
+            profile: profile ? await serializeProfile(db, profile) : null,
+          });
+        },
+      );
 
       app.get("/api/organizer/events/:eventId/operations", async (request, response) => {
         const organizerId = await organizer(request, response);

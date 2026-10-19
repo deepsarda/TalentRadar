@@ -2,6 +2,7 @@ import type { QuotaRule } from "@talentradar/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { type ProfileMember, ProfileModal } from "../components/ProfileModal";
 import { PromoteQuickForm } from "../components/PromoteQuickForm";
 import { SkillPicker } from "../components/SkillPicker";
 import { useStatusLine } from "../components/statusline";
@@ -1954,6 +1955,7 @@ export function EventSectionPage({
   section: "requirements" | "participants" | "teams" | "settings";
 }) {
   const { eventId } = useParams();
+  const [viewingProfile, setViewingProfile] = useState<ProfileMember | null>(null);
   const queryClient = useQueryClient();
   const { post } = useStatusLine();
   const [configuration, setConfiguration] = useState<EventConfigurationInput | null>(null);
@@ -2119,7 +2121,19 @@ export function EventSectionPage({
                         <span className="flex items-center gap-x-3">
                           <Avatar login={participant.github} size={32} />
                           <span>
-                            {participant.name}
+                            <button
+                              type="button"
+                              className="tui-link text-left font-bold"
+                              aria-haspopup="dialog"
+                              onClick={() =>
+                                setViewingProfile({
+                                  personId: participant.personId,
+                                  name: participant.name,
+                                })
+                              }
+                            >
+                              {participant.name}
+                            </button>
                             <span className="dim block font-normal">
                               @{participant.github}
                               {participant.verified ? null : (
@@ -2134,6 +2148,18 @@ export function EventSectionPage({
                       </td>
                       <td data-label="profile">
                         <StateTag state={participant.profileStatus} />
+                        <TextAction
+                          className="tui-link ml-3"
+                          aria-haspopup="dialog"
+                          onClick={() =>
+                            setViewingProfile({
+                              personId: participant.personId,
+                              name: participant.name,
+                            })
+                          }
+                        >
+                          View profile
+                        </TextAction>
                       </td>
                       <td data-label="application">
                         <StateTag state={participant.status} />
@@ -2158,6 +2184,15 @@ export function EventSectionPage({
             </div>
           )}
         </Pane>
+      ) : null}
+
+      {eventId && viewingProfile ? (
+        <ProfileModal
+          eventId={eventId}
+          title={`${viewingProfile.name} · profile`}
+          members={[viewingProfile]}
+          onClose={() => setViewingProfile(null)}
+        />
       ) : null}
 
       {section === "participants" && eventId && corrections.data?.length ? (

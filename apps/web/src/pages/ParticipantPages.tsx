@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { PersonHeader } from "../components/PersonHeader";
+import { ProfileInsights } from "../components/ProfileInsights";
 import { ReportProblem } from "../components/ReportProblem";
 import { useStatusLine } from "../components/statusline";
 import {
@@ -402,41 +404,6 @@ function ApplyDialog({ repositories, onClose }: { repositories: string[]; onClos
       </div>
       <button type="button" className="modal-backdrop" aria-label="Close" onClick={onClose} />
     </div>
-  );
-}
-
-/** Who this is: avatar, name, GitHub handle and the model's one-paragraph summary. */
-function PersonHeader({
-  name,
-  login,
-  summary,
-}: {
-  name: string;
-  login: string | undefined;
-  summary: string | undefined;
-}) {
-  return (
-    <section className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-5 gap-y-3">
-      {login ? <Avatar login={login} size={72} /> : <span />}
-      <div className="grid min-w-0 gap-1">
-        <p className="font-display text-3xl leading-none">{name}</p>
-        {login ? (
-          <a
-            className="dim w-fit"
-            href={`https://github.com/${encodeURIComponent(login)}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            @{login} ↗
-          </a>
-        ) : null}
-      </div>
-      {summary ? (
-        <p className="col-span-2 max-w-[72ch] text-lg leading-snug sm:col-span-1 sm:col-start-2">
-          {summary}
-        </p>
-      ) : null}
-    </section>
   );
 }
 
@@ -1018,6 +985,7 @@ export function ParticipantProfilePage() {
         }
       />
       <PersonHeader name={data.displayName} login={login} summary={data.summary} />
+      {data.status === "ready" ? <ProfileInsights profile={data} /> : null}
       {replaceCv.isError || rebuild.isError ? (
         <Notice tone="error" tag="error">
           {(replaceCv.error ?? rebuild.error)?.message}
