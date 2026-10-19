@@ -1,4 +1,5 @@
 import {
+  BlockedReason,
   FinishReason,
   GenerateContentResponse,
   type GoogleGenAI,
@@ -103,7 +104,7 @@ describe("judge response completion", () => {
 
   it("reports a prompt block even when there are no candidates", async () => {
     const response = new GenerateContentResponse();
-    response.promptFeedback = { blockReason: "SAFETY" };
+    response.promptFeedback = { blockReason: BlockedReason.SAFETY };
     const { ai } = clientFor(response);
     await expect(
       judgeProfile({
