@@ -92,7 +92,6 @@
   font-size: 15px;
   line-height: 1.55;
   color: var(--fg);
-  background: var(--bg);
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
 }
@@ -101,7 +100,48 @@
   html,
   body {
     min-width: 320px;
+  }
+
+  html {
     background: var(--bg);
+  }
+
+  /* Transparent so the backdrop below shows; html carries the solid fallback. */
+  body {
+    background: transparent;
+  }
+
+  /* Fixed backdrop: two soft glows (teal top-left, blue top-right), faint radar rings
+     off the top-right corner, and a dot grid that fades out toward the edges.
+     Panes keep their solid surfaces, so this only shows in the gutters. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(60rem 40rem at 0% 0%, rgb(62 207 159 / 0.1), transparent 60%),
+      radial-gradient(50rem 36rem at 100% 10%, rgb(125 184 240 / 0.07), transparent 60%),
+      radial-gradient(70rem 30rem at 50% 110%, rgb(62 207 159 / 0.05), transparent 70%),
+      repeating-radial-gradient(
+        circle at 100% 0%,
+        transparent 0 5.9rem,
+        rgb(62 207 159 / 0.05) 5.9rem 6rem
+      ),
+      radial-gradient(rgb(230 237 233 / 0.07) 1px, transparent 1.5px) 0 0 / 22px 22px,
+      var(--bg);
+  }
+
+  /* Rings and dots fade out so they never compete with content in the middle. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(ellipse 80% 70% at 50% 45%, var(--bg) 0%, transparent 85%);
+    opacity: 0.85;
   }
 
   ::selection {
@@ -151,8 +191,19 @@
     min-height: 100dvh;
   }
 
+  /* daisyUI paints base-100 on every [data-theme] element; clear it so the body
+     backdrop shows through. */
+  html[data-theme] {
+    background-color: var(--bg);
+  }
+
+  .app[data-theme] {
+    background-color: transparent;
+  }
+
   .app-header {
-    background: var(--raised);
+    background: rgb(21 29 26 / 0.82);
+    backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--line);
   }
 
