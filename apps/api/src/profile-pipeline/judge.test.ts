@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { GoogleGenAI } from "@google/genai";
-import { promptVersion, taxonomy, taxonomyIds } from "@talentradar/shared";
+import { NO_DOMAIN_EVIDENCE, promptVersion, taxonomy, taxonomyIds } from "@talentradar/shared";
 import { describe, expect, it } from "vitest";
 import { type FewShot, fewShots } from "./few-shot.js";
 import {
@@ -289,17 +289,40 @@ describe("mandatory domain assessment", () => {
     );
   });
 
-  it("rejects positive domains without evidence or without valid paths", () => {
+  it("rejects positive domains that cite no evidence at all", () => {
     const missing = changed();
     const domain = missing.repos[0]?.domains["backend"];
     if (!domain) throw new Error("fixture needs backend");
     domain.evidence = [];
     expect(() => sanitizeResponse(missing, [facts], noCv)).toThrow();
+  });
+
+  it("drops invalid evidence paths and keeps scoring on the rest", () => {
+    const mixed = changed();
+    const backend = mixed.repos[0]?.domains["backend"];
+    if (!backend?.evidence[0]) throw new Error("fixture needs backend evidence");
+    const valid = backend.evidence[0];
+    backend.evidence = [valid, { path: "invented.ts", note: "Not a real path" }];
+    const kept = sanitizeResponse(mixed, [facts], noCv).repos[0]?.skills;
+    expect(kept?.find((skill) => skill.id === "backend")).toMatchObject({
+      level: backend.level,
+      evidence: [valid],
+    });
+  });
+
+  it("scores a domain as no evidence when every cited path is invalid", () => {
     const invented = changed();
     const backend = invented.repos[0]?.domains["backend"];
     if (!backend) throw new Error("fixture needs backend");
     backend.evidence = [{ path: "invented.ts", note: "Not a real path" }];
-    expect(() => sanitizeResponse(invented, [facts], noCv)).toThrow(/no valid evidence/);
+    const result = sanitizeResponse(invented, [facts], noCv);
+    const skills = result.repos[0]?.skills ?? [];
+    expect(skills.find((skill) => skill.id === "backend")).toMatchObject({
+      level: 0,
+      thought: NO_DOMAIN_EVIDENCE,
+      evidence: [],
+    });
+    expect(skills.filter((skill) => skill.id in taxonomy.domains)).toHaveLength(domainIds.length);
   });
 });
 

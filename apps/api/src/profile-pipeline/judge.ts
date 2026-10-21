@@ -482,10 +482,10 @@ export function sanitizeResponse(
         const path = citable(item.path);
         return path ? [{ ...item, path }] : [];
       });
+      // Invalid citations are dropped one by one; a domain left with none is scored as no
+      // evidence rather than failing the whole assessment.
       if (score.level > 0 && evidence.length === 0)
-        throw new JudgeValidationError([
-          `repos[${index}].domains.${id}.evidence: no valid evidence paths`,
-        ]);
+        return { id, level: 0, thought: NO_DOMAIN_EVIDENCE, evidence };
       return { id, ...score, evidence };
     });
     for (const flag of parsed.data.flags) flags.add(flag);
