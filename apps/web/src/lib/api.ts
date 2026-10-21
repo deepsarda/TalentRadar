@@ -222,6 +222,16 @@ export interface ParticipantProfileResponse {
     taxonomyVersion: string;
     builtAt?: string;
     error?: string;
+    assessment?: {
+      thoughts: string;
+      repositories: Array<{
+        repository: string;
+        commitSha: string;
+        originality: number;
+        authorship: number;
+        qualifiesForNovelty: boolean;
+      }>;
+    };
   };
   jobs: Array<{
     id: string;
@@ -231,6 +241,25 @@ export interface ParticipantProfileResponse {
     progress: Array<{ at: string; code: string; message: string }>;
     error?: string;
   }>;
+}
+
+export interface OrganizerParticipantProfile {
+  person: {
+    personId: string;
+    name: string;
+    github: string;
+    college?: string;
+    year?: string;
+    branch?: string;
+  };
+  profile: ParticipantProfileResponse["profile"] | null;
+}
+
+export async function getOrganizerParticipantProfile(
+  eventId: string,
+  personId: string,
+): Promise<OrganizerParticipantProfile> {
+  return apiRequest(`/api/organizer/events/${eventId}/participants/${personId}/profile`);
 }
 
 export interface ParticipantApplicationDetails {

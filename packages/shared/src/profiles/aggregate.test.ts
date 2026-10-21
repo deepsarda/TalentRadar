@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { PersonProfileSchema, ProfileSkillSchema } from "../schemas.js";
+import { taxonomy } from "../taxonomy/taxonomy.js";
 import {
   aggregateProfile,
   MAX_UPSTREAM_BONUS,
@@ -11,6 +13,8 @@ import {
   upstreamBonus,
   withDetectedTools,
 } from "./aggregate.js";
+
+const domainIds = Object.keys(taxonomy.domains);
 
 describe("aggregateProfile", () => {
   it("reproduces the specification's weighted PyTorch example", () => {
@@ -76,6 +80,91 @@ describe("aggregateProfile", () => {
     );
     expect(profile.skills[0]).toMatchObject({ level: 2, confidence: "low", effective: 1.2 });
   });
+
+  it("includes all domains as explicit no-evidence scores when no repositories demonstrate them", () => {
+    const profile = aggregateProfile("person", "Person", {
+      thoughts: "",
+      summary: "No repo evidence",
+      repos: [],
+      cv: { claims: [] },
+      flags: [],
+    });
+    expect(profile.skills.map((skill) => skill.id).sort()).toEqual([...domainIds].sort());
+    for (const domain of profile.skills) {
+      expect(domain).toMatchObject({ level: 0, effective: 0, confidence: "low", evidence: [] });
+      expect(domain.thought).toContain("No evidence");
+    }
+    expect(PersonProfileSchema.safeParse(profile).success).toBe(true);
+    expect(ProfileSkillSchema.safeParse({ ...profile.skills[0], id: "react" }).success).toBe(false);
+    expect(ProfileSkillSchema.safeParse({ ...profile.skills[0], id: "constructor" }).success).toBe(
+      false,
+    );
+  });
+
+  it("does not dilute a positive domain score or raise confidence with no-evidence repositories", () => {
+    const base = {
+      commitSha: "a123456",
+      pushedAt: "2026-10-01T00:00:00Z",
+      authorship: 1,
+      originality: 4,
+    };
+    const noEvidence = { id: "backend", evidence: [], thought: "No backend evidence.", level: 0 };
+    const profile = aggregateProfile("person", "Person", {
+      thoughts: "",
+      summary: "Backend work",
+      cv: { claims: [] },
+      flags: [],
+      repos: [
+        {
+          ...base,
+          repo: "person/api",
+          skills: [
+            {
+              id: "backend",
+              evidence: [{ path: "server.ts", note: "Service implementation" }],
+              thought: "Strong service work.",
+              level: 4,
+            },
+          ],
+        },
+        { ...base, repo: "person/art", skills: [noEvidence] },
+        { ...base, repo: "person/docs", skills: [noEvidence] },
+      ],
+    });
+    expect(profile.skills.find((skill) => skill.id === "backend")).toMatchObject({
+      level: 4,
+      confidence: "medium",
+      effective: 3.4,
+    });
+  });
+});
+
+it("keeps combined domain explanations within the participant profile contract", () => {
+  const profile = aggregateProfile("person", "Person", {
+    thoughts: "",
+    summary: "Backend work",
+    cv: { claims: [] },
+    flags: [],
+    repos: ["api", "service"].map((name) => ({
+      repo: `person/${name}`,
+      commitSha: "a123456",
+      pushedAt: "2026-10-01T00:00:00Z",
+      authorship: 1,
+      originality: 4,
+      skills: [
+        {
+          id: "backend",
+          evidence: [{ path: "server.ts", note: "Service implementation" }],
+          thought: "Architecture and tested error handling. ".repeat(12),
+          level: 4,
+        },
+      ],
+    })),
+  });
+  expect(
+    profile.skills.find((skill) => skill.id === "backend")?.thought.length,
+  ).toBeLessThanOrEqual(600);
+  expect(PersonProfileSchema.safeParse(profile).success).toBe(true);
 });
 
 describe("withDetectedTools", () => {

@@ -4,6 +4,8 @@ import { promptVersion, taxonomy, taxonomyIds } from "@talentradar/shared";
 import { describe, expect, it } from "vitest";
 import { type FewShot, fewShots } from "./few-shot.js";
 import {
+  buildPrompt,
+  FetchResultSchema,
   fixedPromptPrefix,
   judgeProfile,
   noCv,
@@ -18,18 +20,28 @@ import {
  * Bump promptVersion in packages/shared/src/taxonomy/versions.ts, then record both values here.
  */
 const pinnedPrompt = {
+<<<<<<< HEAD
   version: "v4",
   fingerprint: "26583780583e75727b1771e8e8e4281f596bfc1fb8d490578108939aa381aa1f",
+=======
+  version: "v7",
+  fingerprint: "7bd3aea63e1b616228ad8fcee9901d4ddab6d814e2eca3be2ae86bb87a88382f",
+>>>>>>> 3d70cf8c20c58d0dbe0498b69827d1d6ec730e62
 };
 
 interface SchemaNode {
   propertyOrdering?: string[];
   properties?: Record<string, SchemaNode>;
   items?: SchemaNode;
+  anyOf?: SchemaNode[];
 }
 
 /** Fails when an object's keys are not in the schema's reasoning-before-verdict order. */
 function expectKeyOrder(value: unknown, schema: SchemaNode, at: string): void {
+  if (schema.anyOf?.[0]) {
+    expectKeyOrder(value, schema.anyOf[0], at);
+    return;
+  }
   if (Array.isArray(value)) {
     value.forEach((item, index) => {
       if (schema.items) expectKeyOrder(item, schema.items, `${at}[${index}]`);
@@ -68,11 +80,20 @@ function factsFor(shot: FewShot): RepositoryFacts {
 
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 
+type ExampleRepository = {
+  thoughts: string;
+  skills: Array<{ id: string; evidence: Array<{ path: string }>; thought: string; level: number }>;
+  domains: Record<string, { evidence: Array<{ path: string }>; thought: string; level: number }>;
+};
+
+const assessments = (repo: unknown) => {
+  const block = repo as ExampleRepository;
+  return [...block.skills, ...Object.values(block.domains)];
+};
+
 describe.each(fewShots.map((shot) => [shot.teaches, shot] as const))("few-shot: %s", (_, shot) => {
   const cited = shot.expected.repos.flatMap((repo) =>
-    (repo as { skills: Array<{ evidence: Array<{ path: string }> }> }).skills.flatMap((skill) =>
-      skill.evidence.map((item) => item.path),
-    ),
+    assessments(repo).flatMap((skill) => skill.evidence.map((item) => item.path)),
   );
 
   it("parses with the real output schema and loses nothing in per-block validation", () => {
@@ -104,14 +125,14 @@ describe.each(fewShots.map((shot) => [shot.teaches, shot] as const))("few-shot: 
     const thoughts = [
       shot.expected.thoughts,
       ...shot.expected.repos.flatMap((repo) => {
-        const block = repo as { thoughts: string; skills: Array<{ thought: string }> };
-        return [block.thoughts, ...block.skills.map((skill) => skill.thought)];
+        const block = repo as ExampleRepository;
+        return [block.thoughts, ...assessments(repo).map((skill) => skill.thought)];
       }),
     ];
     for (const thought of thoughts) expect(words(thought), thought).toBeLessThanOrEqual(65);
     const tokens = JSON.stringify(shot).length / 4;
     expect(tokens).toBeGreaterThan(1_000);
-    expect(tokens).toBeLessThan(3_500);
+    expect(tokens).toBeLessThan(4_000);
   });
 });
 
@@ -121,10 +142,11 @@ describe("few-shot set", () => {
       originality: number;
       flags: string[];
       skills: Array<{ id: string; level: number; evidence: Array<{ path: string }> }>;
+      domains: Record<string, { level: number }>;
     };
 
   it("teaches what the spec's table says each shot teaches", () => {
-    expect(fewShots).toHaveLength(5);
+    expect(fewShots).toHaveLength(6);
     const tutorial = repo(0);
     expect(tutorial.originality).toBe(2);
     expect(tutorial.skills.every((skill) => skill.level <= 2)).toBe(true);
@@ -150,15 +172,42 @@ describe("few-shot set", () => {
   });
 
   it("teaches a different area per shot, and reports areas alongside tools", () => {
-    const areaSets = fewShots.map((_, index) =>
-      repo(index)
-        .skills.map((skill) => skill.id)
-        .filter((id) => id in taxonomy.domains),
+    const areaSets = fewShots.slice(0, 5).map((_, index) =>
+      Object.entries(repo(index).domains)
+        .filter(([, score]) => score.level > 0)
+        .map(([id]) => id),
     );
     for (const areas of areaSets) expect(areas.length).toBeGreaterThan(0);
     // Tools like python may repeat across shots; each shot's main area should not.
     const firstAreas = areaSets.map((areas) => areas.at(-1));
     expect(new Set(firstAreas).size).toBe(firstAreas.length);
+  });
+
+  it("teaches broad technology recall without turning a dependency into AI engineering", () => {
+    const coverage = repo(5);
+    expect(coverage.skills.map((skill) => skill.id)).toEqual(
+      expect.arrayContaining([
+        "react",
+        "typescript",
+        "css",
+        "vite",
+        "nodejs",
+        "express",
+        "mongodb",
+        "python",
+        "numpy",
+        "pytorch",
+        "docker",
+        "github_actions",
+        "terraform",
+        "aws",
+      ]),
+    );
+    expect(coverage.skills.find((skill) => skill.id === "pytorch")?.level).toBe(1);
+    expect(coverage.domains["ai_ml"]?.level).toBe(0);
+    for (const id of ["frontend", "backend", "data", "devops_cloud"])
+      expect(coverage.domains[id]?.level).toBeGreaterThan(0);
+    expect(new Set(coverage.skills.map((skill) => skill.id)).size).toBe(coverage.skills.length);
   });
 
   it("is clearly synthetic", () => {
@@ -173,12 +222,97 @@ describe("few-shot set", () => {
   });
 });
 
+describe("real participant prompt", () => {
+  it("preserves sampled-file metadata through the persisted job schema and into the model input", () => {
+    const facts = factsFor(fewShots[0] as FewShot);
+    if (!facts.included) throw new Error("fixture must be included");
+    facts.selectedFiles = [
+      {
+        path: "main.py",
+        content: "import pygame\n[... source omitted ...]\nrun()",
+        lineCount: 2400,
+        truncated: true,
+      },
+    ];
+    const persisted = FetchResultSchema.parse(facts);
+    const prompt = buildPrompt(
+      [persisted, { repository: "example/ignored", included: false, exclusionReason: "empty" }],
+      noCv,
+      0,
+    );
+    const realInput = prompt.slice(
+      prompt.lastIndexOf("<untrusted_repository_data>") + "<untrusted_repository_data>".length,
+      prompt.lastIndexOf("</untrusted_repository_data>"),
+    );
+    const parsed = JSON.parse(realInput);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].files).toEqual(facts.selectedFiles);
+    expect(parsed[0].facts.technologyHints).toEqual(facts.technologyMatches);
+  });
+});
+
+describe("mandatory domain assessment", () => {
+  const domainIds = Object.keys(taxonomy.domains);
+  const shot = fewShots.at(-1) as FewShot;
+  const facts = factsFor(shot);
+  const changed = () =>
+    structuredClone(shot.expected) as typeof shot.expected & {
+      repos: Array<{
+        domains: Record<
+          string,
+          { level: number; thought: string; evidence: Array<{ path: string; note: string }> }
+        >;
+      }>;
+    };
+
+  it("makes all domain names required object properties in the provider schema", () => {
+    const schema = responseSchema().properties.repos.items.properties;
+    expect(schema.domains.required).toEqual(domainIds);
+    expect(Object.keys(schema.domains.properties)).toEqual(domainIds);
+    expect(schema.domains.additionalProperties).toBe(false);
+    const variants = schema.domains.properties["frontend"]?.anyOf;
+    expect(variants?.[0]?.properties.level).toMatchObject({ enum: [0] });
+    expect(variants?.[0]?.properties.evidence).toMatchObject({ maxItems: 0 });
+    expect(variants?.[1]?.properties.level).toMatchObject({ minimum: 1, maximum: 5 });
+    expect(variants?.[1]?.properties.evidence).toMatchObject({ minItems: 1 });
+  });
+
+  it("keeps every explicit domain score, including zeros, in the validated repository", () => {
+    const result = sanitizeResponse(shot.expected, [facts], noCv);
+    const domains = result.repos[0]?.skills.filter((skill) => skill.id in taxonomy.domains) ?? [];
+    expect(domains.map((skill) => skill.id)).toEqual(domainIds);
+    expect(domains.find((skill) => skill.id === "backend")?.level).toBeGreaterThan(0);
+    expect(domains.find((skill) => skill.id === "ai_ml")).toMatchObject({ level: 0, evidence: [] });
+  });
+
+  it("rejects missing domain scores and missing repository assessments rather than inventing zeros", () => {
+    const raw = changed();
+    delete raw.repos[0]?.domains["security"];
+    expect(() => sanitizeResponse(raw, [facts], noCv)).toThrow(/domains.security: invalid_type/);
+    expect(() => sanitizeResponse({ ...shot.expected, repos: [] }, [facts], noCv)).toThrow(
+      /missing_repository/,
+    );
+  });
+
+  it("rejects positive domains without evidence or without valid paths", () => {
+    const missing = changed();
+    const domain = missing.repos[0]?.domains["backend"];
+    if (!domain) throw new Error("fixture needs backend");
+    domain.evidence = [];
+    expect(() => sanitizeResponse(missing, [facts], noCv)).toThrow();
+    const invented = changed();
+    const backend = invented.repos[0]?.domains["backend"];
+    if (!backend) throw new Error("fixture needs backend");
+    backend.evidence = [{ path: "invented.ts", note: "Not a real path" }];
+    expect(() => sanitizeResponse(invented, [facts], noCv)).toThrow(/no valid evidence/);
+  });
+});
+
 /*
  * Spec Day-2 tests against the pinned model; they spend real quota, so they only run with
  * GEMINI_API_KEY set (free tier: the input below is a synthetic shot, no CV).
- *  1. Enum size: the request carries the full taxonomy enum (every id) and the full JSON schema,
- *     and Gemini accepts it. If it is rejected as too large, the spec's fallback applies: drop the
- *     enum from responseSchema() and rely on the prompt list plus sanitizeResponse's id check.
+ *  1. Schema compatibility: the large taxonomy enum was rejected by Gemini, so ids live in the
+ *     prompt and sanitizeResponse enforces them. The fallback schema must still be accepted.
  *  2. Key order: the RAW response string keeps reasoning before verdict (thoughts before summary,
  *     repo thoughts before originality, evidence -> thought -> level), not alphabetical order.
  */
@@ -187,11 +321,11 @@ describe("pinned Gemini model (live, Day-2 tests)", () => {
   const model = process.env["GEMINI_MODEL"] ?? "gemini-3.1-flash-lite";
 
   it.skipIf(!apiKey)(
-    "accepts the full taxonomy enum and schema, and keeps reasoning-before-verdict key order",
+    "accepts the taxonomy fallback schema and keeps reasoning-before-verdict key order",
     async () => {
       const shot = fewShots[4] as FewShot;
       const schema = responseSchema() as SchemaNode & { properties: Record<string, unknown> };
-      expect(JSON.stringify(schema)).toContain(`"enum":${JSON.stringify(taxonomyIds)}`);
+      expect(JSON.stringify(schema)).not.toContain(`"enum":${JSON.stringify(taxonomyIds)}`);
       const { rawText, result } = await judgeProfile({
         ai: new GoogleGenAI({ apiKey: apiKey ?? "" }),
         model,
@@ -237,14 +371,26 @@ describe("evidence from the file tree", () => {
         thoughts: "t",
         summary: "s",
         repos: [
-          { repo: "riya/nox", thoughts: "t", originality: 3, skills: [skill(path)], flags: [] },
+          {
+            repo: "riya/nox",
+            thoughts: "t",
+            originality: 3,
+            domains: Object.fromEntries(
+              Object.keys(taxonomy.domains).map((id) => [
+                id,
+                { evidence: [], thought: "No evidence.", level: 0 },
+              ]),
+            ),
+            skills: [skill(path)],
+            flags: [],
+          },
         ],
         cv: { claims: [] },
         flags: [],
       },
       [repository],
       noCv,
-    ).repos[0]?.skills[0]?.evidence[0]?.path ?? null;
+    ).repos[0]?.skills.find((skill) => skill.id === "kotlin")?.evidence[0]?.path ?? null;
 
   it("accepts a real tracked file that wasn't sampled", () => {
     expect(judged("core/Vm.kt")).toBe("core/Vm.kt");

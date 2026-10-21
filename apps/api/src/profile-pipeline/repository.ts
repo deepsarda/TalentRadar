@@ -66,6 +66,26 @@ const sourceExtensions = new Set([
   ".sol",
   ".vue",
   ".svelte",
+  ".html",
+  ".htm",
+  ".css",
+  ".scss",
+  ".sass",
+  ".sql",
+  ".r",
+  ".scala",
+  ".ex",
+  ".exs",
+  ".lua",
+  ".sh",
+  ".bash",
+  ".ps1",
+  ".ino",
+  ".gd",
+  ".v",
+  ".sv",
+  ".vhd",
+  ".vhdl",
 ]);
 const excludedSegments = new Set([
   "node_modules",
@@ -108,6 +128,20 @@ function safePath(filePath: string): boolean {
   );
 }
 
+function supportingFile(filePath: string): boolean {
+  const basename = path.basename(filePath).toLowerCase();
+  return (
+    manifestNames.has(basename) ||
+    filePath.toLowerCase().startsWith(".github/workflows/") ||
+    /\.(?:tf|tfvars|prisma|proto|graphql|gql|csproj)$/.test(basename) ||
+    /^(?:docker-compose|compose|render|vercel|netlify|serverless|cloudbuild|dbt_project|chart|values|kustomization|playbook|prometheus|wrangler)\.(?:ya?ml|jsonc?|toml)$/.test(
+      basename,
+    ) ||
+    /(?:^|[.])config\.(?:[cm]?[jt]s|jsonc?|ya?ml|toml)$/.test(basename) ||
+    ["makefile", "cmakelists.txt", "jenkinsfile", ".gitlab-ci.yml", "nginx.conf"].includes(basename)
+  );
+}
+
 async function readSafeFile(
   root: string,
   relativePath: string,
@@ -127,7 +161,7 @@ async function readSafeFile(
 }
 
 /**
- * The only paths extraction ever reads (manifests, a top-level README, source files). The clone
+ * The only paths extraction ever reads (supporting files, a top-level README, source). The clone
  * fetches just these, so image/data-heavy repos don't blow the clone timeout. Returned as
  * non-cone sparse-checkout patterns, anchored and with glob characters escaped.
  */
@@ -136,7 +170,7 @@ export function sparseCheckoutPatterns(trackedPaths: string[]): string[] {
     .filter(
       (file) =>
         safePath(file) &&
-        (manifestNames.has(path.basename(file).toLowerCase()) ||
+        (supportingFile(file) ||
           /^readme(?:\.[^/]+)?$/i.test(file) ||
           sourceExtensions.has(path.extname(file).toLowerCase())),
     )
@@ -151,6 +185,59 @@ function sourceScore(filePath: string): number {
   if (/(test|spec)\./.test(normalized)) score -= 2;
   score -= normalized.split("/").length * 0.1;
   return score;
+}
+
+export const MAX_SAMPLED_FILES = 20;
+const LARGE_SOURCE_SLOTS = 14;
+const MAX_SOURCE_BYTES = 256 * 1024;
+
+interface SourceCandidate {
+  path: string;
+  content: string;
+  lineCount: number;
+  nonBlankLineCount: number;
+}
+
+function compareCandidates(left: SourceCandidate, right: SourceCandidate): number {
+  return (
+    right.nonBlankLineCount - left.nonBlankLineCount ||
+    sourceScore(right.path) - sourceScore(left.path) ||
+    left.path.localeCompare(right.path)
+  );
+}
+
+function coverageKeys(candidate: SourceCandidate): string[] {
+  return [
+    `extension:${path.extname(candidate.path).toLowerCase() || path.basename(candidate.path).toLowerCase()}`,
+    ...detectTechnologies({ files: { [candidate.path]: candidate.content } })
+      .filter((match) => match.reasons.some((reason) => !reason.startsWith("concepts:")))
+      .map((match) => `technology:${match.id}`),
+  ];
+}
+
+/** Spread a large file's excerpt across its beginning, middle and end. */
+function sourceExcerpt(content: string, characterBudget: number): string {
+  if (content.length <= characterBudget) return content;
+  const omission = "\n[... source omitted ...]\n";
+  const available = characterBudget - omission.length * 2;
+  if (available < 3) return content.slice(0, characterBudget);
+  const headSize = Math.ceil(available / 3);
+  const middleSize = Math.floor(available / 3);
+  const tailSize = available - headSize - middleSize;
+  const middleStart = Math.floor((content.length - middleSize) / 2);
+  return [
+    content.slice(0, headSize),
+    content.slice(middleStart, middleStart + middleSize),
+    content.slice(-tailSize),
+  ].join(omission);
+}
+
+export interface SampledSourceFile {
+  path: string;
+  content: string;
+  /** Total lines in the original file, before excerpting. */
+  lineCount: number;
+  truncated: boolean;
 }
 
 /** How deep the file tree sent to the model goes, and how many entries at most. */
@@ -182,7 +269,7 @@ export interface ExtractedCheckout {
   tree: string[];
   readme?: string;
   readmePath?: string;
-  selectedFiles: Array<{ path: string; content: string }>;
+  selectedFiles: SampledSourceFile[];
   /** Lower-cased paths of the manifests that were read for technology detection. */
   manifests: string[];
 }
@@ -228,19 +315,97 @@ export async function extractCheckout(
         .slice(0, 300)
         .join("\n")
     : undefined;
-  const sourceCandidates = files
-    .filter((file) => sourceExtensions.has(path.extname(file).toLowerCase()))
-    .sort((left, right) => sourceScore(right) - sourceScore(left) || left.localeCompare(right));
-  const selectedFiles: Array<{ path: string; content: string }> = [];
-  let remainingCharacters = options.repoTokenBudget * 4;
-  for (const file of sourceCandidates) {
-    if (selectedFiles.length >= 8 || remainingCharacters <= 0) break;
-    const content = await readSafeFile(checkout, file, 40 * 1024);
-    if (!content || Buffer.byteLength(content) < 1024) continue;
-    const included = content.slice(0, remainingCharacters);
-    selectedFiles.push({ path: file, content: included });
-    remainingCharacters -= included.length;
+  const sourceCandidates: SourceCandidate[] = [];
+  const coverageCandidates = new Map<string, SourceCandidate>();
+  const rememberCoverage = (key: string, candidate: SourceCandidate) => {
+    const previous = coverageCandidates.get(key);
+    if (!previous || compareCandidates(candidate, previous) < 0)
+      coverageCandidates.set(key, candidate);
+  };
+  for (const file of files) {
+    const extension = path.extname(file).toLowerCase();
+    const isSource = sourceExtensions.has(extension);
+    const isSupporting = supportingFile(file);
+    if (!isSource && !isSupporting) continue;
+    const content =
+      manifests[file.toLowerCase()] ?? (await readSafeFile(checkout, file, MAX_SOURCE_BYTES));
+    if (!content?.trim()) continue;
+    const lines = content.split(/\r?\n/);
+    const candidate: SourceCandidate = {
+      path: file,
+      content,
+      lineCount: lines.length - (lines.at(-1) === "" ? 1 : 0),
+      nonBlankLineCount: lines.filter((line) => line.trim().length > 0).length,
+    };
+    if (isSource) {
+      sourceCandidates.push(candidate);
+      sourceCandidates.sort(compareCandidates);
+      if (sourceCandidates.length > MAX_SAMPLED_FILES) sourceCandidates.pop();
+      rememberCoverage(`source:${extension}`, candidate);
+    }
+    if (isSupporting) {
+      for (const key of coverageKeys(candidate)) rememberCoverage(key, candidate);
+    }
   }
+
+  const pool = [
+    ...new Map(
+      [...sourceCandidates, ...coverageCandidates.values()].map((candidate) => [
+        candidate.path,
+        candidate,
+      ]),
+    ).values(),
+  ].sort(compareCandidates);
+  const keys = new Map(pool.map((candidate) => [candidate.path, coverageKeys(candidate)]));
+  const selected = new Map(
+    sourceCandidates.slice(0, LARGE_SOURCE_SLOTS).map((candidate) => [candidate.path, candidate]),
+  );
+  const covered = new Set([...selected.keys()].flatMap((file) => keys.get(file) ?? []));
+  // The remaining slots protect minority languages and supporting tools from large-file bias.
+  while (selected.size < MAX_SAMPLED_FILES) {
+    let next: SourceCandidate | undefined;
+    let bestGain = -1;
+    for (const candidate of pool) {
+      if (selected.has(candidate.path)) continue;
+      const gain = (keys.get(candidate.path) ?? []).filter((key) => !covered.has(key)).length;
+      if (gain > bestGain) {
+        next = candidate;
+        bestGain = gain;
+      }
+    }
+    if (!next) break;
+    selected.set(next.path, next);
+    for (const key of keys.get(next.path) ?? []) covered.add(key);
+  }
+  const selectedCandidates = [...selected.values()].sort(compareCandidates);
+
+  // Give every selected file a share before spending the budget on larger files. Reading the
+  // shortest first redistributes unused shares, while the final prompt stays in line-count order.
+  const byLength = [...selectedCandidates].sort(
+    (left, right) => left.content.length - right.content.length,
+  );
+  const allowances = new Map<string, number>();
+  let remainingCharacters = options.repoTokenBudget * 4;
+  for (const [index, candidate] of byLength.entries()) {
+    const allowance = Math.min(
+      candidate.content.length,
+      Math.floor(remainingCharacters / (byLength.length - index)),
+    );
+    allowances.set(candidate.path, allowance);
+    remainingCharacters -= allowance;
+  }
+  const selectedFiles: SampledSourceFile[] = selectedCandidates.flatMap((candidate) => {
+    const allowance = allowances.get(candidate.path) ?? 0;
+    if (allowance <= 0) return [];
+    return [
+      {
+        path: candidate.path,
+        content: sourceExcerpt(candidate.content, allowance),
+        lineCount: candidate.lineCount,
+        truncated: candidate.content.length > allowance,
+      },
+    ];
+  });
   const technologyMatches = detectTechnologies({
     files: {
       // Every tracked path, empty, so file/path/extension rules (Dockerfile → docker, *.csproj…)
@@ -248,7 +413,7 @@ export async function extractCheckout(
       // collision; content-based detectors only read manifests and sampled files.
       ...Object.fromEntries(files.map((file) => [file, ""])),
       ...manifests,
-      ...Object.fromEntries(selectedFiles.map((file) => [file.path, file.content])),
+      ...Object.fromEntries(selectedCandidates.map((file) => [file.path, file.content])),
     },
     languages: Object.keys(options.languages),
   });

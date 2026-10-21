@@ -2,6 +2,7 @@ import type { QuotaRule } from "@talentradar/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { type ProfileMember, ProfileModal } from "../components/ProfileModal";
 import { PromoteQuickForm } from "../components/PromoteQuickForm";
 import { SkillPicker } from "../components/SkillPicker";
 import { useStatusLine } from "../components/statusline";
@@ -50,6 +51,7 @@ import {
   getQuickImport,
   type OrganizerCorrection,
   type OrganizerEventDetails,
+  type OrganizerEventOperations,
   type OrganizerEventSummary,
   publishOrganizerEvent,
   resolveOrganizerCorrection,
@@ -1957,6 +1959,17 @@ export function EventSectionPage({
   section: "requirements" | "participants" | "teams" | "settings";
 }) {
   const { eventId } = useParams();
+  const [profileView, setProfileView] = useState<{
+    title: string;
+    members: ProfileMember[];
+  } | null>(null);
+  const openMemberProfile = (member: ProfileMember) =>
+    setProfileView({ title: `${member.name} · profile`, members: [member] });
+  const openTeamProfiles = (team: OrganizerEventOperations["teams"][number]) =>
+    setProfileView({
+      title: `${team.name} · profiles`,
+      members: team.members.map((member) => ({ personId: member.id, name: member.name })),
+    });
   const queryClient = useQueryClient();
   const { post } = useStatusLine();
   const [configuration, setConfiguration] = useState<EventConfigurationInput | null>(null);
@@ -2122,7 +2135,19 @@ export function EventSectionPage({
                         <span className="flex items-center gap-x-3">
                           <Avatar login={participant.github} size={32} />
                           <span>
-                            {participant.name}
+                            <button
+                              type="button"
+                              className="tui-link text-left font-bold"
+                              aria-haspopup="dialog"
+                              onClick={() =>
+                                openMemberProfile({
+                                  personId: participant.personId,
+                                  name: participant.name,
+                                })
+                              }
+                            >
+                              {participant.name}
+                            </button>
                             <span className="dim block font-normal">
                               @{participant.github}
                               {participant.verified ? null : (
@@ -2137,6 +2162,18 @@ export function EventSectionPage({
                       </td>
                       <td data-label="profile">
                         <StateTag state={participant.profileStatus} />
+                        <TextAction
+                          className="tui-link ml-3"
+                          aria-haspopup="dialog"
+                          onClick={() =>
+                            openMemberProfile({
+                              personId: participant.personId,
+                              name: participant.name,
+                            })
+                          }
+                        >
+                          View profile
+                        </TextAction>
                       </td>
                       <td data-label="application">
                         <StateTag state={participant.status} />
@@ -2161,6 +2198,16 @@ export function EventSectionPage({
             </div>
           )}
         </Pane>
+      ) : null}
+
+      {eventId && profileView ? (
+        <ProfileModal
+          key={profileView.title}
+          eventId={eventId}
+          title={profileView.title}
+          members={profileView.members}
+          onClose={() => setProfileView(null)}
+        />
       ) : null}
 
       {section === "participants" && eventId && corrections.data?.length ? (
@@ -2196,16 +2243,36 @@ export function EventSectionPage({
                   </thead>
                   <tbody>
                     {teams.map((team) => (
-                      <tr key={team.id}>
+                      <tr key={team.id} data-clickable onClick={() => openTeamProfiles(team)}>
                         <th scope="row" data-label="team" className="font-bold">
-                          {team.name}
+                          <button
+                            type="button"
+                            className="tui-link text-left font-bold"
+                            aria-haspopup="dialog"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              openTeamProfiles(team);
+                            }}
+                          >
+                            {team.name}
+                          </button>
                         </th>
                         <td data-label="members" className="wrap">
                           <span>
                             {team.members.map((member, index) => (
                               <span key={member.id}>
                                 {index ? <span className="dim">, </span> : null}
-                                {member.name}
+                                <button
+                                  type="button"
+                                  className="tui-link"
+                                  aria-haspopup="dialog"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openMemberProfile({ personId: member.id, name: member.name });
+                                  }}
+                                >
+                                  {member.name}
+                                </button>
                                 {member.id === team.captainId ? (
                                   <span className="dim" title="captain">
                                     {" "}
@@ -2240,7 +2307,19 @@ export function EventSectionPage({
               <ul className="grid gap-2">
                 {lookingForTeam.map((participant) => (
                   <li key={participant.personId}>
-                    <span className="font-bold">{participant.name}</span>{" "}
+                    <button
+                      type="button"
+                      className="tui-link font-bold"
+                      aria-haspopup="dialog"
+                      onClick={() =>
+                        openMemberProfile({
+                          personId: participant.personId,
+                          name: participant.name,
+                        })
+                      }
+                    >
+                      {participant.name}
+                    </button>{" "}
                     {participant.topSkills.length ? (
                       splitSkills(participant.topSkills, (id) => id).map((group, index) => (
                         <span

@@ -23,6 +23,7 @@ import type { ApiModule } from "../events/organizer-events.js";
 import { enqueueJob } from "../jobs/queue.js";
 import { assessmentCacheKey } from "../profile-pipeline/cache-key.js";
 import { type CvDetails, extractCvDetails, pdfText } from "./cv-details.js";
+import { serializeProfile } from "./profile-view.js";
 
 const GithubRepositorySchema = z.object({
   full_name: z.string().regex(/^[^/]+\/[^/]+$/),
@@ -528,20 +529,7 @@ export function createParticipantApi(
           .sort({ createdAt: 1 })
           .toArray();
         response.json({
-          profile: {
-            id: profile._id.toHexString(),
-            version: profile.version,
-            status: profile.status,
-            displayName: profile.displayName,
-            repos: profile.repos,
-            skills: profile.skills,
-            novelty: profile.novelty,
-            flags: profile.flags,
-            summary: profile.summary,
-            taxonomyVersion: profile.taxonomyVersion,
-            builtAt: profile.builtAt?.toISOString(),
-            error: profile.error,
-          },
+          profile: await serializeProfile(db, profile),
           jobs: jobs.map((job) => ({
             id: job._id?.toHexString(),
             type: job.type,

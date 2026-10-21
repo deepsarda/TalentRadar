@@ -6,14 +6,53 @@ const TaxonomyIdSchema = z.string().refine((value) => taxonomyIds.includes(value
   message: "Unknown taxonomy id",
 });
 
-export const RepositorySkillJudgmentSchema = z.object({
-  id: TaxonomyIdSchema,
-  evidence: z
-    .array(z.object({ path: z.string().min(1).max(1024), note: z.string().min(1).max(500) }))
-    .min(1),
-  thought: z.string().max(600),
-  level: z.number().int().min(1).max(5),
+const JudgmentEvidenceSchema = z.object({
+  path: z.string().min(1).max(1024),
+  note: z.string().min(1).max(500),
 });
+
+export const NO_DOMAIN_EVIDENCE = "No evidence in the reviewed inputs.";
+
+export const DomainScoreSchema = z
+  .object({
+    evidence: z.array(JudgmentEvidenceSchema),
+    thought: z.string().min(1).max(600),
+    level: z.number().int().min(0).max(5),
+  })
+  .superRefine((score, context) => {
+    if ((score.level === 0) !== (score.evidence.length === 0)) {
+      context.addIssue({
+        code: "custom",
+        message: "Domain 0 means no evidence; positive domain scores require evidence",
+      });
+    }
+  });
+
+/** Every domain is an explicit model decision; omitted domains are never defaulted to zero. */
+export const DomainScoresSchema = z
+  .object(Object.fromEntries(Object.keys(taxonomy.domains).map((id) => [id, DomainScoreSchema])))
+  .strict();
+
+export const RepositorySkillJudgmentSchema = z
+  .object({
+    id: TaxonomyIdSchema,
+    evidence: z.array(JudgmentEvidenceSchema),
+    thought: z.string().max(600),
+    level: z.number().int().min(0).max(5),
+  })
+  .superRefine((skill, context) => {
+    const noEvidenceDomain = Object.hasOwn(taxonomy.domains, skill.id) && skill.level === 0;
+    if (
+      noEvidenceDomain
+        ? skill.evidence.length > 0
+        : skill.level === 0 || skill.evidence.length === 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Only unevidenced domains can have level 0; positive skills require evidence",
+      });
+    }
+  });
 
 export const RepositoryJudgmentSchema = z.object({
   repo: z.string().regex(/^[^/]+\/[^/]+$/),
@@ -138,6 +177,7 @@ export function aggregateProfile(
   const bonus = upstreamBonus(options.signals?.mergedUpstreamPullRequests ?? 0);
   const judgment = ProfileJudgmentSchema.parse(rawJudgment);
   const skillIds = new Set([
+    ...Object.keys(taxonomy.domains),
     ...judgment.repos.flatMap((repository) => repository.skills.map((skill) => skill.id)),
     ...judgment.cv.claims.map((claim) => claim.id),
   ]);
@@ -193,10 +233,11 @@ export function aggregateProfile(
       confidence,
       effective: round(level * confidenceFactors[confidence]),
       evidence,
-      thought:
+      thought: (
         contributions.map((contribution) => contribution.skill.thought).join(" ") ||
         claim?.thought ||
-        "",
+        (skillId in taxonomy.domains ? "No evidence for this domain in the reviewed inputs." : "")
+      ).slice(0, 600),
     };
   });
 

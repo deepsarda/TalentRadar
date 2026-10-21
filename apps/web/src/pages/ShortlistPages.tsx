@@ -23,6 +23,7 @@ import {
   useState,
 } from "react";
 import { Link, useParams } from "react-router-dom";
+import { ProfileModal } from "../components/ProfileModal";
 import { useStatusLine } from "../components/statusline";
 import {
   ActionAnchor,
@@ -668,6 +669,7 @@ export function ShortlistWorkspacePage() {
   // cursor, so only one team is ever expanded.
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [profileTeamId, setProfileTeamId] = useState<string | null>(null);
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const scrollToSelection = useRef(false);
   const account = useQuery({ queryKey: ["current-user"], queryFn: getCurrentUser, retry: false });
@@ -826,7 +828,7 @@ export function ShortlistWorkspacePage() {
     }
   }, [decision, selectedTeamId]);
 
-  // j/k and arrows move the cursor, Enter opens or closes its inspector row, Esc closes it.
+  // j/k and arrows move the cursor; Enter opens its profiles. Dialogs own their keys.
   useEffect(() => {
     const ids = decision?.results.map((result) => result.teamId) ?? [];
     const onKey = (event: KeyboardEvent) => {
@@ -848,12 +850,12 @@ export function ShortlistWorkspacePage() {
         event.key === "Enter" &&
         !(event.target instanceof HTMLElement && event.target.closest("button, a, summary"))
       ) {
-        setExpanded((open) => !open);
+        setProfileTeamId(selectedTeamId);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [decision]);
+  }, [decision, selectedTeamId]);
 
   useEffect(() => {
     if (!scrollToSelection.current || !selectedTeamId) return;
@@ -997,6 +999,7 @@ export function ShortlistWorkspacePage() {
     );
   }
   const profileById = new Map(data.profiles.map((profile) => [profile.personId, profile]));
+  const profileTeam = data.teams.find((team) => team.teamId === profileTeamId);
   const unmapped =
     data.event.quotas.some((quota) => quota.attribute === "college") &&
     data.unmappedColleges.length > 0;
@@ -1207,7 +1210,7 @@ export function ShortlistWorkspacePage() {
           <div className="table-scroll">
             <table className="tui-table cards min-[721px]:[&_td]:px-3 min-[721px]:[&_th]:px-3 min-[721px]:[&_tr>*:first-child]:pl-6 min-[721px]:[&_tr>*:last-child]:pr-6">
               <caption className="sr-only">
-                Ranked teams. Use j and k to move, Enter to expand, Escape to collapse.
+                Ranked teams. Use j and k to move, Enter to view profiles, Escape to close.
               </caption>
               <thead>
                 <tr>
@@ -1249,7 +1252,7 @@ export function ShortlistWorkspacePage() {
                         }}
                         data-clickable
                         aria-selected={selectedTeamId === result.teamId}
-                        onClick={() => toggleRow(result.teamId)}
+                        onClick={() => setProfileTeamId(result.teamId)}
                       >
                         <td data-label="rank" className="num dim whitespace-nowrap">
                           <span className="font-semibold text-text">{result.rank ?? "—"}</span>
@@ -1282,16 +1285,31 @@ export function ShortlistWorkspacePage() {
                           <span className="flex flex-wrap items-baseline justify-end gap-x-[1ch] sm:justify-start">
                             <button
                               type="button"
-                              className="text-left font-bold"
-                              aria-expanded={open}
-                              aria-controls={open ? `inspect-${result.teamId}` : undefined}
+                              className="tui-link text-left font-bold"
+                              aria-haspopup="dialog"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setProfileTeamId(result.teamId);
+                              }}
                             >
-                              <span aria-hidden="true" className="dim font-normal">
-                                {open ? "▾ " : "▸ "}
-                              </span>
                               {result.name}
                             </button>
+<<<<<<< HEAD
                             <TeamTags result={result} flags={teamFlags} />
+=======
+                            <TextAction
+                              aria-label={`Explain ${result.name}`}
+                              aria-expanded={open}
+                              aria-controls={open ? `inspect-${result.teamId}` : undefined}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                toggleRow(result.teamId);
+                              }}
+                            >
+                              explain
+                            </TextAction>
+                            <TeamTags result={result} />
+>>>>>>> 3d70cf8c20c58d0dbe0498b69827d1d6ec730e62
                           </span>
                         </td>
                         <td data-label="fit" className="num">
@@ -1346,6 +1364,7 @@ export function ShortlistWorkspacePage() {
           </div>
         )}
       </Pane>
+<<<<<<< HEAD
 
       {comparingRuns && eventId && data.runs.length >= 2 ? (
         <CompareRunsModal
@@ -1589,6 +1608,15 @@ export function ShortlistWorkspacePage() {
           error={publishRun.isError ? publishRun.error.message : null}
           onConfirm={() => publishRun.mutate()}
           onClose={() => setPublishConfirmOpen(false)}
+=======
+      {eventId && profileTeam ? (
+        <ProfileModal
+          key={profileTeam.teamId}
+          eventId={eventId}
+          title={`${profileTeam.name} · profiles`}
+          members={profileTeam.members}
+          onClose={() => setProfileTeamId(null)}
+>>>>>>> 3d70cf8c20c58d0dbe0498b69827d1d6ec730e62
         />
       ) : null}
     </div>
@@ -2032,6 +2060,7 @@ function TeamGapFillersSection({
 
 export function SavedRunPage() {
   const { eventId, runId } = useParams();
+  const [profileTeamId, setProfileTeamId] = useState<string | null>(null);
   const run = useQuery({
     queryKey: ["organizer-shortlist-run", eventId, runId],
     queryFn: () => getOrganizerShortlistRun(eventId ?? "", runId ?? ""),
@@ -2056,6 +2085,7 @@ export function SavedRunPage() {
   }
 
   const data = run.data;
+  const profileTeam = data.results.find((team) => team.teamId === profileTeamId);
   const selectedCount = data.results.filter((result) => result.status === "selected").length;
   const waitlistedCount = data.results.filter((result) => result.status === "waitlisted").length;
   const lastSelected = data.results.findLastIndex((result) => result.status === "selected");
@@ -2129,6 +2159,7 @@ export function SavedRunPage() {
                 <SavedRow
                   key={result.teamId}
                   result={result}
+                  onProfiles={() => setProfileTeamId(result.teamId)}
                   cutoffAfter={
                     index === lastSelected && index < data.results.length - 1
                       ? data.selection.cutoffScore
@@ -2142,6 +2173,22 @@ export function SavedRunPage() {
       </Pane>
 
       <div className="grid gap-4">
+        {eventId && profileTeam ? (
+          <ProfileModal
+            key={profileTeam.teamId}
+            eventId={eventId}
+            title={`${profileTeam.name} · profiles`}
+            members={profileTeam.memberIds.map((personId) => ({
+              personId,
+              name:
+                data.snapshot?.people.find((person) => person.personId === personId)?.name ??
+                "Participant",
+            }))}
+            frozenPeople={data.snapshot?.people ?? null}
+            onClose={() => setProfileTeamId(null)}
+          />
+        ) : null}
+
         <Details summary="parameters">
           <div className="grid max-w-2xl gap-6">
             <KeyValue
@@ -2214,7 +2261,15 @@ export function SavedRunPage() {
   );
 }
 
-function SavedRow({ result, cutoffAfter }: { result: DecidedTeam; cutoffAfter: number | null }) {
+function SavedRow({
+  result,
+  cutoffAfter,
+  onProfiles,
+}: {
+  result: DecidedTeam;
+  cutoffAfter: number | null;
+  onProfiles: () => void;
+}) {
   return (
     <>
       <tr>
@@ -2223,7 +2278,14 @@ function SavedRow({ result, cutoffAfter }: { result: DecidedTeam; cutoffAfter: n
         </td>
         <th scope="row" data-label="team" className="font-normal">
           <span className="flex flex-wrap items-baseline justify-end gap-x-[1ch] sm:justify-start">
-            <strong>{result.name}</strong>
+            <button
+              type="button"
+              className="tui-link font-bold"
+              aria-haspopup="dialog"
+              onClick={onProfiles}
+            >
+              {result.name}
+            </button>
             <TeamTags result={result} />
           </span>
         </th>
