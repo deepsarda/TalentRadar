@@ -30,7 +30,9 @@
 :root {
   color-scheme: dark;
   /* Everything below derives from daisyUI's built-in Abyss theme. Abyss's own
-     "accent" is grey, so the app's accent is its lime primary. */
+     "accent" is grey, so the app's accent is its primary, toned down from the stock
+     neon lime. */
+  --color-primary: oklch(80% 0.14 135);
   --color-accent: var(--color-primary);
   --color-accent-content: var(--color-primary-content);
   --bg: var(--color-base-200);
