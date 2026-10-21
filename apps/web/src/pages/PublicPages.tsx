@@ -242,7 +242,10 @@ export function LandingPage() {
               Public events accepting registrations
             </p>
           </div>
-          <Link to="/organizer" className="text-sm sm:text-base font-medium text-[var(--accent)] hover:underline">
+          <Link
+            to="/organizer"
+            className="text-sm sm:text-base font-medium text-[var(--accent)] hover:underline"
+          >
             Host a hackathon →
           </Link>
         </div>
