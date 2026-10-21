@@ -11,29 +11,29 @@
   default: true;
   prefersdark: true;
   color-scheme: "dark";
-  --color-base-100: #151d1a;
-  --color-base-200: #0e1412;
-  --color-base-300: #232e29;
-  --color-base-content: #e6ede9;
-  --color-primary: #3ecf9f;
-  --color-primary-content: #06201a;
-  --color-secondary: #9aa8a1;
-  --color-secondary-content: #06201a;
-  --color-accent: #3ecf9f;
-  --color-accent-content: #06201a;
-  --color-neutral: #1c2622;
-  --color-neutral-content: #e6ede9;
+  --color-base-100: #171613;
+  --color-base-200: #0f0e0c;
+  --color-base-300: #2b2924;
+  --color-base-content: #efe9dc;
+  --color-primary: #ff6b2c;
+  --color-primary-content: #1a0a02;
+  --color-secondary: #a19a8b;
+  --color-secondary-content: #1a0a02;
+  --color-accent: #ff6b2c;
+  --color-accent-content: #1a0a02;
+  --color-neutral: #201e1a;
+  --color-neutral-content: #efe9dc;
   --color-info: #7db8f0;
   --color-info-content: #06141f;
-  --color-success: #3ecf9f;
-  --color-success-content: #06201a;
-  --color-warning: #f0b45a;
+  --color-success: #8bd17c;
+  --color-success-content: #1a0a02;
+  --color-warning: #f2c14e;
   --color-warning-content: #1a1000;
   --color-error: #f27a7a;
   --color-error-content: #1a0000;
-  --radius-selector: 0.5rem;
-  --radius-field: 0.5rem;
-  --radius-box: 0.75rem;
+  --radius-selector: 2px;
+  --radius-field: 2px;
+  --radius-box: 3px;
   --size-selector: 0.25rem;
   --size-field: 0.25rem;
   --border: 1px;
@@ -42,18 +42,18 @@
 }
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --font-display: var(--font-sans);
-  --color-bg: #0e1412;
-  --color-raised: #151d1a;
-  --color-fg: #e6ede9;
-  --color-accent: #3ecf9f;
-  --color-dim: #9aa8a1;
-  --color-warn: #f0b45a;
+  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-display: "Bricolage Grotesque", var(--font-sans);
+  --color-bg: #0f0e0c;
+  --color-raised: #171613;
+  --color-fg: #efe9dc;
+  --color-accent: #ff6b2c;
+  --color-dim: #a19a8b;
+  --color-warn: #f2c14e;
   --color-error: #f27a7a;
   --color-info: #7db8f0;
-  --color-line: #232e29;
+  --color-line: #2b2924;
 }
 
 /* ---------------------------------------------------------------- base */
@@ -68,26 +68,26 @@
 
 :root {
   color-scheme: dark;
-  --bg: #0e1412;
-  --raised: #151d1a;
-  --soft: #1c2622;
-  --fg: #e6ede9;
-  --accent: #3ecf9f;
-  --accent-soft: rgb(62 207 159 / 0.14);
-  --accent-strong: #7fe5c2;
-  --on-accent: #06201a;
-  --dim: #9aa8a1;
-  --warn: #f0b45a;
-  --warn-soft: rgb(239 159 39 / 0.14);
+  --bg: #0f0e0c;
+  --raised: #171613;
+  --soft: #201e1a;
+  --fg: #efe9dc;
+  --accent: #ff6b2c;
+  --accent-soft: rgb(255 107 44 / 0.14);
+  --accent-strong: #ff9a66;
+  --on-accent: #1a0a02;
+  --dim: #a19a8b;
+  --warn: #f2c14e;
+  --warn-soft: rgb(242 193 78 / 0.14);
   --error: #f27a7a;
   --error-soft: rgb(226 75 74 / 0.14);
   --info: #7db8f0;
   --info-soft: rgb(55 138 221 / 0.14);
   /* hairlines between rows */
-  --line: #232e29;
+  --line: #2b2924;
   /* card and control borders */
-  --frame: #35433d;
-  --radius: 0.75rem;
+  --frame: #423e36;
+  --radius: 3px;
   font-family: var(--font-sans);
   font-size: 15px;
   line-height: 1.55;
@@ -111,37 +111,17 @@
     background: transparent;
   }
 
-  /* Fixed backdrop: two soft glows (teal top-left, blue top-right), faint radar rings
-     off the top-right corner, and a dot grid that fades out toward the edges.
-     Panes keep their solid surfaces, so this only shows in the gutters. */
+  /* Fine grain so the ink background reads as a surface, not a void. */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
     z-index: -1;
     pointer-events: none;
-    background:
-      radial-gradient(60rem 40rem at 0% 0%, rgb(62 207 159 / 0.1), transparent 60%),
-      radial-gradient(50rem 36rem at 100% 10%, rgb(125 184 240 / 0.07), transparent 60%),
-      radial-gradient(70rem 30rem at 50% 110%, rgb(62 207 159 / 0.05), transparent 70%),
-      repeating-radial-gradient(
-        circle at 100% 0%,
-        transparent 0 5.9rem,
-        rgb(62 207 159 / 0.05) 5.9rem 6rem
-      ),
-      radial-gradient(rgb(230 237 233 / 0.07) 1px, transparent 1.5px) 0 0 / 22px 22px,
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
       var(--bg);
-  }
-
-  /* Rings and dots fade out so they never compete with content in the middle. */
-  body::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background: radial-gradient(ellipse 80% 70% at 50% 45%, var(--bg) 0%, transparent 85%);
-    opacity: 0.85;
+    opacity: 1;
+    background-blend-mode: soft-light;
   }
 
   ::selection {
@@ -161,8 +141,9 @@
   h1,
   h2,
   h3 {
-    font-weight: 600;
-    letter-spacing: -0.01em;
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.02em;
   }
 
   .sr-only {
@@ -202,7 +183,7 @@
   }
 
   .app-header {
-    background: rgb(21 29 26 / 0.82);
+    background: rgb(15 14 12 / 0.88);
     backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--line);
   }
@@ -222,7 +203,8 @@
     align-items: center;
     gap: 0.75rem;
     color: var(--fg);
-    font-size: 19px;
+    font-family: var(--font-display);
+    font-size: 21px;
     font-weight: 800;
     letter-spacing: -0.02em;
     text-decoration: none;
@@ -301,9 +283,9 @@
   .app-tabs-inner {
     display: flex;
     gap: 1.5rem;
-    max-width: 72rem;
+    max-width: 82rem;
     margin: 0 auto;
-    padding: 0 1.25rem;
+    padding: 0 1.75rem;
     overflow-x: auto;
     scrollbar-width: none;
   }
@@ -345,7 +327,8 @@
     padding: 0.45rem 1.25rem;
     background: var(--raised);
     border-top: 1px solid var(--line);
-    font-size: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
     color: var(--dim);
   }
 
@@ -427,6 +410,16 @@
     border-radius: var(--radius);
   }
 
+  .pane::before {
+    content: "";
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    width: 1.5rem;
+    height: 2px;
+    background: var(--accent);
+  }
+
   .pane:focus-within,
   .pane[data-active="true"] {
     border-color: var(--accent);
@@ -445,8 +438,11 @@
 
   .pane-title h2,
   .pane-title h3 {
-    font-size: 14px;
-    font-weight: 600;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -482,7 +478,7 @@
   /* ------------------------------------------------------------ headings */
 
   .font-display {
-    font-family: var(--font-sans);
+    font-family: var(--font-display);
     font-weight: 600;
     letter-spacing: -0.015em;
   }
@@ -497,8 +493,8 @@
   }
 
   .screen-head h1 {
-    font-size: 24px;
-    font-weight: 600;
+    font-size: 32px;
+    font-weight: 800;
     line-height: 1.2;
     color: var(--fg);
   }
@@ -539,7 +535,7 @@
     gap: 0.4rem;
     padding: 0.4rem 1rem;
     border: 1px solid var(--line);
-    border-radius: 10px;
+    border-radius: 2px;
     background: var(--soft);
     color: var(--dim);
     font-size: 14px;
@@ -576,7 +572,7 @@
     align-items: baseline;
     gap: 0.25rem 0.6rem;
     padding: 0.5rem 0.75rem;
-    border-radius: 8px;
+    border-radius: 2px;
     background: var(--soft);
     font-size: 12px;
     color: var(--dim);
@@ -602,7 +598,7 @@
     padding: 0.35rem 0.9rem;
     gap: 0.4rem;
     border: 1px solid var(--frame);
-    border-radius: 8px;
+    border-radius: 2px;
     background: var(--raised);
     color: var(--fg);
     font-family: var(--font-sans);
@@ -694,7 +690,10 @@
 
   .field-label {
     color: var(--dim);
-    font-size: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
     font-weight: 500;
   }
 
@@ -712,7 +711,7 @@
   .textarea.tui-input {
     width: 100%;
     border: 1px solid var(--frame);
-    border-radius: 8px;
+    border-radius: 2px;
     /* background-color, not the shorthand: daisy draws the select arrow as a background image */
     background-color: var(--raised);
     color: var(--fg);
@@ -743,7 +742,7 @@
 
   .input.tui-input::placeholder,
   .textarea.tui-input::placeholder {
-    color: #6f7d76;
+    color: #6f6a5f;
   }
 
   input[type="datetime-local"].tui-input::-webkit-calendar-picker-indicator,
@@ -771,7 +770,7 @@
     align-items: start;
     padding: 0.65rem 0.85rem;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 2px;
     cursor: pointer;
   }
 
@@ -786,7 +785,7 @@
 
   /* Slider: a real range input, read as `alpha ---o--- 0.70` */
   .range.tui-range {
-    --range-bg: #dfe4e0;
+    --range-bg: #423e36;
     --range-thumb: #ffffff;
     --range-thumb-size: 1rem;
     --range-progress: var(--accent);
@@ -831,13 +830,16 @@
     align-items: center;
     gap: 0.4ch;
     padding: 0.1rem 0.55rem;
-    border-radius: 6px;
+    border-radius: 2px;
     background: rgb(255 255 255 / 0.08);
     white-space: nowrap;
-    font-size: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
     font-weight: 500;
-    line-height: 1.5;
-    color: #c9d3ce;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    line-height: 1.6;
+    color: #d6cfc0;
   }
 
   .tui-status[data-size="lg"] {
@@ -846,8 +848,8 @@
   }
 
   .tui-status[data-tone="ok"] {
-    background: var(--accent-soft);
-    color: var(--accent-strong);
+    background: rgb(139 209 124 / 0.12);
+    color: #a6e09a;
   }
 
   .tui-status[data-tone="warn"] {
@@ -898,8 +900,11 @@
 
   .tui-table thead th {
     color: var(--dim);
-    font-size: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
     font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     border-bottom: 1px solid var(--line);
   }
 
@@ -1051,14 +1056,14 @@
     width: 7rem;
     height: 6px;
     border-radius: 3px;
-    background: #2a3631;
+    background: #2b2924;
   }
 
   .bar-fill {
     position: absolute;
     inset: 0 auto 0 0;
     border-radius: 3px;
-    background: #3ecf9f;
+    background: #ff6b2c;
   }
 
   .bar-target {
@@ -1072,7 +1077,7 @@
   }
 
   .bar[data-tone="warn"] .bar-fill {
-    background: #ef9f27;
+    background: #f2c14e;
   }
 
   .bar[data-tone="error"] .bar-fill {
@@ -1092,7 +1097,7 @@
     gap: 0.5rem 1rem;
     padding: 0.7rem 0.9rem;
     border: 1px solid rgb(125 184 240 / 0.35);
-    border-radius: 8px;
+    border-radius: 2px;
     background: var(--info-soft);
   }
 
@@ -1101,7 +1106,7 @@
   }
 
   .notice[data-tone="warn"] {
-    border-color: rgb(240 180 90 / 0.4);
+    border-color: rgb(242 193 78 / 0.4);
     background: var(--warn-soft);
   }
 
@@ -1111,7 +1116,7 @@
   }
 
   .notice[data-tone="ok"] {
-    border-color: rgb(62 207 159 / 0.4);
+    border-color: rgb(255 107 44 / 0.4);
     background: var(--accent-soft);
   }
 
@@ -1177,7 +1182,7 @@
     min-width: 0;
     padding: 0.5rem 0;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 2px;
     background: var(--bg);
     color: var(--fg);
     font-family: var(--font-mono);
@@ -1213,7 +1218,7 @@
     max-width: 40rem;
     padding: 0;
     border: 1px solid var(--line);
-    border-radius: 12px;
+    border-radius: 3px;
     background: var(--raised);
     box-shadow: 0 20px 60px rgb(0 0 0 / 0.6);
   }
@@ -1268,7 +1273,7 @@
     position: absolute;
     inset: 0;
     border-radius: 50%;
-    background: conic-gradient(from 0deg, transparent 0 300deg, rgb(62 207 159 / 0.45) 360deg);
+    background: conic-gradient(from 0deg, transparent 0 300deg, rgb(255 107 44 / 0.5) 360deg);
     animation: sweep 4s linear infinite;
   }
 
@@ -1294,7 +1299,7 @@
   .hero-badge {
     display: inline-block;
     padding: 0.2rem 0.7rem;
-    border-radius: 6px;
+    border-radius: 2px;
     background: var(--accent-soft);
     color: var(--accent-strong);
     font-size: 12px;
@@ -1469,7 +1474,7 @@
     margin-top: 4px;
     padding: 0.25rem 0;
     border: 1px solid var(--frame);
-    border-radius: 8px;
+    border-radius: 2px;
     background: var(--raised);
     box-shadow: 0 10px 30px rgb(0 0 0 / 0.5);
     max-height: 18rem;
