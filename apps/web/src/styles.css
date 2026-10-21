@@ -5,7 +5,8 @@
 }
 
 @theme {
-  --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans:
+    "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-display: "Bricolage Grotesque", var(--font-sans);
   --color-bg: var(--color-base-200);
@@ -86,15 +87,28 @@
     z-index: -1;
     pointer-events: none;
     background:
-      radial-gradient(60rem 40rem at 0% 0%, color-mix(in oklab, var(--accent) 10%, transparent), transparent 60%),
-      radial-gradient(50rem 36rem at 100% 10%, color-mix(in oklab, var(--info) 9%, transparent), transparent 60%),
-      radial-gradient(70rem 30rem at 50% 110%, color-mix(in oklab, var(--accent) 6%, transparent), transparent 70%),
+      radial-gradient(
+        60rem 40rem at 0% 0%,
+        color-mix(in oklab, var(--accent) 10%, transparent),
+        transparent 60%
+      ),
+      radial-gradient(
+        50rem 36rem at 100% 10%,
+        color-mix(in oklab, var(--info) 9%, transparent),
+        transparent 60%
+      ),
+      radial-gradient(
+        70rem 30rem at 50% 110%,
+        color-mix(in oklab, var(--accent) 6%, transparent),
+        transparent 70%
+      ),
       repeating-radial-gradient(
         circle at 100% 0%,
         transparent 0 5.9rem,
         color-mix(in oklab, var(--accent) 7%, transparent) 5.9rem 6rem
       ),
-      radial-gradient(color-mix(in oklab, var(--fg) 9%, transparent) 1px, transparent 1.5px) 0 0 / 22px 22px,
+      radial-gradient(color-mix(in oklab, var(--fg) 9%, transparent) 1px, transparent 1.5px) 0 0 /
+      22px 22px,
       var(--bg);
   }
 
@@ -108,7 +122,6 @@
     background: radial-gradient(ellipse 80% 70% at 50% 45%, var(--bg) 0%, transparent 85%);
     opacity: 0.8;
   }
-
 
   ::selection {
     background: var(--accent-soft);
@@ -1249,7 +1262,11 @@
     position: absolute;
     inset: 0;
     border-radius: 50%;
-    background: conic-gradient(from 0deg, transparent 0 300deg, color-mix(in oklab, var(--accent) 50%, transparent) 360deg);
+    background: conic-gradient(
+      from 0deg,
+      transparent 0 300deg,
+      color-mix(in oklab, var(--accent) 50%, transparent) 360deg
+    );
     animation: sweep 4s linear infinite;
   }
 

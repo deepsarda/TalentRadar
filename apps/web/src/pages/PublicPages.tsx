@@ -141,7 +141,9 @@ function RadarScope() {
       ))}
       <path d={`M${c} 8V${size - 8}M8 ${c}H${size - 8}`} className="scope-ring" />
       <g className="scope-sweep">
-        <path d={`M${c} ${c}L${c} ${c - r}A${r} ${r} 0 0 1 ${c + r * Math.sin(0.9)} ${c - r * Math.cos(0.9)}Z`} />
+        <path
+          d={`M${c} ${c}L${c} ${c - r}A${r} ${r} 0 0 1 ${c + r * Math.sin(0.9)} ${c - r * Math.cos(0.9)}Z`}
+        />
       </g>
       {blips.map((blip) => {
         const a = (blip.angle * Math.PI) / 180;
