@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { StatusProvider, useStatusLine } from "../components/statusline";
 import { LoadingState } from "../components/ui";
@@ -24,9 +24,9 @@ function portalFromPath(pathname: string): Portal {
 function navigationFor(portal: Portal, pathname: string): NavItem[] {
   if (portal === "participant") {
     return [
-      { label: "overview", to: "/participant", match: "/participant/applications" },
-      { label: "profile", to: "/participant/profile" },
-      { label: "data", to: "/participant/settings/data" },
+      { label: "Overview", to: "/participant", match: "/participant/applications" },
+      { label: "Profile", to: "/participant/profile" },
+      { label: "Your data", to: "/participant/settings/data" },
     ];
   }
 
@@ -35,26 +35,26 @@ function navigationFor(portal: Portal, pathname: string): NavItem[] {
     if (eventId && eventId !== "new") {
       const root = `/organizer/events/${eventId}`;
       return [
-        { label: "overview", to: root },
-        { label: "requirements", to: `${root}/requirements` },
-        { label: "participants", to: `${root}/participants` },
-        { label: "teams", to: `${root}/teams` },
-        { label: "shortlist", to: `${root}/shortlist`, match: `${root}/runs` },
-        { label: "settings", to: `${root}/settings` },
-        { label: "all events", to: "/organizer" },
+        { label: "Overview", to: root },
+        { label: "Requirements", to: `${root}/requirements` },
+        { label: "Participants", to: `${root}/participants` },
+        { label: "Teams", to: `${root}/teams` },
+        { label: "Shortlist", to: `${root}/shortlist`, match: `${root}/runs` },
+        { label: "Settings", to: `${root}/settings` },
+        { label: "All events", to: "/organizer" },
       ];
     }
     return [
-      { label: "events", to: "/organizer" },
-      { label: "new event", to: "/organizer/events/new" },
-      { label: "quick shortlist", to: "/organizer/quick/new", match: "/organizer/quick" },
+      { label: "Events", to: "/organizer" },
+      { label: "New event", to: "/organizer/events/new" },
+      { label: "Quick shortlist", to: "/organizer/quick/new", match: "/organizer/quick" },
     ];
   }
 
   return [
-    { label: "home", to: "/" },
-    { label: "participant", to: "/participant" },
-    { label: "organizer", to: "/organizer" },
+    { label: "Home", to: "/" },
+    { label: "Participant", to: "/participant" },
+    { label: "Organizer", to: "/organizer" },
   ];
 }
 
@@ -111,7 +111,7 @@ function Palette({ items, onClose }: { items: NavItem[]; onClose: () => void }) 
             aria-controls="palette-results"
             aria-activedescendant={results[cursor] ? `palette-${cursor}` : undefined}
             value={query}
-            placeholder="go to…"
+            placeholder="Go to…"
             onChange={(event) => {
               setQuery(event.target.value);
               setCursor(0);
@@ -158,7 +158,7 @@ function Help({ tabs, onClose }: { tabs: NavItem[]; onClose: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => closeRef.current?.focus(), []);
   const rows: Array<[string, string]> = [
-    [`1–${tabs.length}`, `switch tab (${tabs.map((tab) => tab.label).join(", ")})`],
+    [`1–${tabs.length}`, `switch section (${tabs.map((tab) => tab.label).join(", ")})`],
     [": or ⌘K", "go to any screen"],
     ["j / k", "move down / up in a list"],
     ["enter", "open the selected row"],
@@ -175,7 +175,7 @@ function Help({ tabs, onClose }: { tabs: NavItem[]; onClose: () => void }) {
       <div className="modal-box">
         <div className="pane m-4">
           <header className="pane-title">
-            <h2>keys</h2>
+            <h2>Keyboard shortcuts</h2>
           </header>
           <div className="pane-body">
             <dl className="kv">
@@ -200,62 +200,11 @@ function Help({ tabs, onClose }: { tabs: NavItem[]; onClose: () => void }) {
   );
 }
 
-/** Columns × rows the workspace would hold at the body font size, like a real emulator title. */
-const measureTerminal = () =>
-  `${Math.floor(window.innerWidth / 8.4)}×${Math.floor(window.innerHeight / 21)}`;
-
-function useTerminalSize() {
-  const [size, setSize] = useState(measureTerminal);
-  useEffect(() => {
-    const onResize = () => setSize(measureTerminal());
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-  return size;
-}
-
-/** Scanlines and glow, remembered per viewer; off by default for reduced motion. */
-function useCrt() {
-  const [crt, setCrt] = useState(() => {
-    try {
-      const saved = window.localStorage.getItem("talentradar.crt");
-      if (saved) return saved === "on";
-    } catch {
-      // Storage blocked: fall through to the motion preference.
-    }
-    return !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  });
-  useEffect(() => {
-    document.documentElement.classList.toggle("crt", crt);
-    try {
-      window.localStorage.setItem("talentradar.crt", crt ? "on" : "off");
-    } catch {
-      // Not persisted; the toggle still works for this page view.
-    }
-  }, [crt]);
-  return [crt, setCrt] as const;
-}
-
-function BootScreen({ onDone }: { onDone: () => void }) {
-  useEffect(() => {
-    const timeout = window.setTimeout(onDone, 900);
-    window.addEventListener("pointerdown", onDone, { once: true });
-    window.addEventListener("keydown", onDone, { once: true });
-    return () => {
-      window.clearTimeout(timeout);
-      window.removeEventListener("pointerdown", onDone);
-      window.removeEventListener("keydown", onDone);
-    };
-  }, [onDone]);
-
-  return (
-    <div className="boot" role="status" aria-label="Opening TalentRadar">
-      <span className="radar" style={{ "--radar-size": "4rem" } as CSSProperties} />
-      <strong className="text-accent">talentradar</strong>
-      <small>press any key</small>
-    </div>
-  );
-}
+const portalLinks: NavItem[] = [
+  { label: "Home", to: "/" },
+  { label: "Participant", to: "/participant", match: "/participant" },
+  { label: "Organizer", to: "/organizer", match: "/organizer" },
+];
 
 function Shell() {
   const location = useLocation();
@@ -274,23 +223,6 @@ function Shell() {
       post("Signed out.");
     },
   });
-  const [booting, setBooting] = useState(() => {
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return false;
-    try {
-      return window.sessionStorage.getItem("talentradar.booted") !== "1";
-    } catch {
-      return false;
-    }
-  });
-  const finishBoot = () => {
-    try {
-      window.sessionStorage.setItem("talentradar.booted", "1");
-    } catch {
-      // Storage can be blocked; the boot screen then shows once per page load.
-    }
-    setBooting(false);
-  };
-
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "auto" });
     const segments = location.pathname.split("/").filter(Boolean);
@@ -331,91 +263,105 @@ function Shell() {
     return () => window.removeEventListener("keydown", onKey);
   }, [navigate, overlay, tabs]);
 
-  const segments = location.pathname.split("/").filter(Boolean);
-  const size = useTerminalSize();
-  const [crt, setCrt] = useCrt();
-
   return (
-    <div className="tui" data-theme="talentradar">
-      {booting ? <BootScreen onDone={finishBoot} /> : null}
+    <div className="app" data-theme="talentradar">
       <a className="sr-only focus:not-sr-only focus:absolute focus:p-2" href="#main-content">
         Skip to content
       </a>
 
-      <header className="tui-chrome">
-        <span className="tui-lights" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </span>
-        <Link className="tui-brand" to="/" aria-label="TalentRadar home">
-          <span className="radar" aria-hidden="true" />
-          talentradar
-        </Link>
-        <span className="tui-chrome-title">
-          {account.data?.login ?? "guest"}@talentradar: ~/
-          {segments.slice(0, -1).map((segment) => `${segment}/`)}
-          <b>{segments.at(-1) ?? ""}</b> — {size}
-        </span>
-        <span className="tui-chrome-actions">
-          <button type="button" aria-pressed={crt} onClick={() => setCrt(!crt)}>
-            crt {crt ? "on" : "off"}
-          </button>
-          {account.data ? (
-            <button type="button" disabled={signOut.isPending} onClick={() => signOut.mutate()}>
-              {signOut.isPending ? "signing out…" : "logout"}
-            </button>
-          ) : account.isPending ? null : (
-            <Link to={`/login?returnTo=${encodeURIComponent(location.pathname)}`}>login</Link>
-          )}
-        </span>
+      <header className="app-header">
+        <div className="app-header-inner">
+          <Link className="app-brand" to="/" aria-label="TalentRadar home">
+            <span className="radar" aria-hidden="true" />
+            TalentRadar
+          </Link>
+          <nav className="app-portals" aria-label="Portals">
+            {portalLinks.map((item) => (
+              <Link
+                key={item.to}
+                to={item.to}
+                aria-current={
+                  item.to === "/"
+                    ? location.pathname === "/"
+                      ? "page"
+                      : undefined
+                    : location.pathname.startsWith(item.match ?? item.to)
+                      ? "page"
+                      : undefined
+                }
+              >
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+          <div className="app-account">
+            {account.data ? (
+              <>
+                <span>@{account.data.login}</span>
+                <button type="button" disabled={signOut.isPending} onClick={() => signOut.mutate()}>
+                  {signOut.isPending ? "Signing out…" : "Sign out"}
+                </button>
+              </>
+            ) : account.isPending ? null : (
+              <Link to={`/login?returnTo=${encodeURIComponent(location.pathname)}`}>Sign in</Link>
+            )}
+          </div>
+        </div>
       </header>
 
-      <nav className="tui-tabs" aria-label="Sections">
-        {tabs.map((tab, index) => (
-          <Link
-            className="tui-tab"
-            key={tab.to}
-            to={tab.to}
-            aria-current={isActive(tab, location.pathname) ? "page" : undefined}
-          >
-            <kbd>{index + 1}</kbd>
-            {tab.label}
-          </Link>
-        ))}
-      </nav>
+      {portal === "public" ? (
+        <div />
+      ) : (
+        <nav className="app-tabs" aria-label="Sections">
+          <div className="app-tabs-inner">
+            {tabs.map((tab) => (
+              <Link
+                className="app-tab"
+                key={tab.to}
+                to={tab.to}
+                aria-current={isActive(tab, location.pathname) ? "page" : undefined}
+              >
+                {tab.label}
+              </Link>
+            ))}
+          </div>
+        </nav>
+      )}
 
-      <main className="tui-workspace" id="main-content">
-        <Suspense fallback={<LoadingState label="loading screen" />}>
+      <main className="app-main" id="main-content">
+        <Suspense fallback={<LoadingState label="Loading" />}>
           <Outlet />
         </Suspense>
       </main>
 
-      <footer className="tui-statusline">
-        <span className="tui-mode">{portal.toUpperCase()}</span>
-        <span>~/{segments.join("/")}</span>
+      <footer className="app-footer">
         <span
-          className="tui-message"
+          className="app-message"
           role="status"
           aria-live="polite"
           data-tone={message?.tone}
           key={message?.id}
         >
-          {message?.text ?? (account.data ? `signed in as @${account.data.login}` : "ready")}
+          {message?.text ?? (account.data ? `Signed in as @${account.data.login}` : "Ready")}
         </span>
-        <span className="tui-keys">
+        <span className="app-footer-links">
           <button type="button" onClick={() => setOverlay("palette")}>
-            <kbd>:</kbd> go to
+            Go to <kbd>:</kbd>
           </button>
           <button type="button" onClick={() => setOverlay("help")}>
-            <kbd>?</kbd> keys
+            Shortcuts <kbd>?</kbd>
           </button>
+          <Link to="/privacy">Privacy</Link>
+          <Link to="/terms">Terms</Link>
         </span>
       </footer>
 
       {overlay === "palette" ? (
         <Palette
-          items={[...tabs.map((tab) => ({ ...tab, label: `tab: ${tab.label}` })), ...destinations]}
+          items={[
+            ...tabs.map((tab) => ({ ...tab, label: `section: ${tab.label}` })),
+            ...destinations,
+          ]}
           onClose={() => setOverlay(null)}
         />
       ) : null}

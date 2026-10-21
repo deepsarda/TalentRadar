@@ -104,4 +104,35 @@ describe("rank", () => {
       lenient.find((team) => team.teamId === "beta")?.score ?? 0,
     );
   });
+
+  it("ranks 1,000 teams well under one second (B6 performance benchmark)", () => {
+    // Generate 1,000 teams with 3,000 member profiles
+    const baseProfile = workedExampleProfiles[0];
+    if (!baseProfile) throw new Error("Missing base profile");
+    const mockProfiles = Array.from({ length: 3000 }, (_, i) => ({
+      ...(workedExampleProfiles[i % workedExampleProfiles.length] ?? baseProfile),
+      personId: `bench-person-${i}`,
+      novelty: i % 5 === 0 ? 1 : 0,
+    }));
+    const mockTeams = Array.from({ length: 1000 }, (_, i) => ({
+      teamId: `bench-team-${i}`,
+      name: `Team ${i}`,
+      memberIds: [
+        `bench-person-${i * 3}`,
+        `bench-person-${i * 3 + 1}`,
+        `bench-person-${i * 3 + 2}`,
+      ],
+      college: i % 2 === 0 ? "SVNIT Surat" : "IIT Bombay",
+      gender: i % 3 === 0 ? "female" : "male",
+      submittedAt: "2026-10-10T10:00:00.000Z",
+    }));
+
+    const start = Date.now();
+    const results = rank(mockProfiles, mockTeams, workedExampleParams);
+    const durationMs = Date.now() - start;
+
+    expect(results).toHaveLength(1000);
+    expect(results[0]?.rank).toBe(1);
+    expect(durationMs).toBeLessThan(1000);
+  });
 });

@@ -13,17 +13,22 @@ const EnvironmentSchema = z
     GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
     GEMINI_API_KEY: z.string().min(1).optional(),
     GEMINI_MODEL: z.string().min(1).default("gemini-3.1-flash-lite"),
+    // Model for the second opinion on borderline candidates. Unset means the primary model, which
+    // is a much weaker check: set a different model to get a genuinely independent judge.
+    GEMINI_SECOND_OPINION_MODEL: z.string().min(1).optional(),
     MODEL_DATA_POLICY: z.enum(["synthetic_only", "paid_private"]).default("synthetic_only"),
     REPO_TOKEN_BUDGET: z.coerce.number().int().min(4000).max(20000).default(12000),
     // Free-tier defaults; your project's real limits are shown in AI Studio.
     GEMINI_REQUESTS_PER_MINUTE: z.coerce.number().int().min(1).default(15),
     GEMINI_TOKENS_PER_MINUTE: z.coerce.number().int().min(1000).default(250_000),
     GITHUB_REQUESTS_PER_HOUR: z.coerce.number().int().min(1).default(5000),
+    RATE_LIMITER_STORAGE: z.enum(["memory", "mongo"]).default("memory"),
     RESEND_API_KEY: z.string().min(1).optional(),
     EMAIL_FROM: z.string().min(3).default("TalentRadar <onboarding@resend.dev>"),
+    // On unless switched off: nothing is ever profiled while the worker is not running.
     RUN_WORKER_IN_API: z
       .enum(["true", "false"])
-      .default("false")
+      .default("true")
       .transform((value) => value === "true"),
   })
   .superRefine((environment, context) => {

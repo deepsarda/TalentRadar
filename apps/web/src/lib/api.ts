@@ -281,6 +281,8 @@ export interface ParticipantTeamContext {
     registrationClosesAt?: string;
   };
   team: ParticipantTeam | null;
+  /** Set when a teamless participant is near, or past, registration close. */
+  teamWarning: { level: "upcoming" | "ineligible"; message: string } | null;
   personId: string;
 }
 
@@ -309,6 +311,11 @@ export interface OrganizerShortlistData {
     capacity: number;
     ranking: RankingParams;
     quotas: QuotaRule[];
+    timeline?: {
+      registrationClosesAt: string;
+      rsvpDeadlineAt?: string;
+      eventStartsAt?: string;
+    };
   };
   profiles: PersonProfile[];
   teams: OrganizerShortlistTeam[];
@@ -963,4 +970,74 @@ export async function getQuickImport(quickId: string): Promise<QuickImportStatus
     `/api/organizer/quick/${quickId}`,
   );
   return response.quick;
+}
+
+export interface ApiGapCandidate {
+  candidate: {
+    personId: string;
+    name: string;
+    github?: string;
+    college?: string;
+    skills: ProfileSkill[];
+  };
+  scoreGain: number;
+  fitGain: number;
+  coveredRequirements: string[];
+  newTeamScore: number;
+}
+
+export interface ApiTeamGapAnalysis {
+  teamId: string;
+  currentScore: number;
+  currentFit: number;
+  unmetRequirements: Array<{
+    skill: string;
+    target: number;
+    currentLevel: number;
+    deficit: number;
+  }>;
+  suggestedCandidates: ApiGapCandidate[];
+}
+
+export async function getTeamGapFillers(
+  eventId: string,
+  teamId: string,
+): Promise<ApiTeamGapAnalysis> {
+  const response = await apiRequest<{ gapAnalysis: ApiTeamGapAnalysis }>(
+    `/api/organizer/events/${eventId}/teams/${teamId}/gap-fillers`,
+  );
+  return response.gapAnalysis;
+}
+
+export interface ApiFormedTeam {
+  teamName: string;
+  memberIds: string[];
+  members: Array<{
+    personId: string;
+    name: string;
+    github?: string;
+    college?: string;
+    skills: ProfileSkill[];
+  }>;
+  score: number;
+  fit: number;
+  coveredSkillsCount: number;
+}
+
+export interface ApiFormationResult {
+  formedTeams: ApiFormedTeam[];
+  unassignedCandidates: Array<{
+    personId: string;
+    name: string;
+    github?: string;
+    college?: string;
+    skills: ProfileSkill[];
+  }>;
+}
+
+export async function getAutoFormation(eventId: string): Promise<ApiFormationResult> {
+  const response = await apiRequest<{ formation: ApiFormationResult }>(
+    `/api/organizer/events/${eventId}/auto-formation`,
+  );
+  return response.formation;
 }

@@ -9,10 +9,12 @@
     "check:types": "tsc -p tsconfig.json --noEmit",
     "detect-report": "tsx --env-file-if-exists=../../.env src/cli/detect-report.ts",
     "dev": "tsx watch --env-file-if-exists=../../.env src/server.ts",
+    "measure-prompt": "tsx --env-file-if-exists=../../.env src/cli/measure-prompt.ts",
     "profile": "tsx --env-file-if-exists=../../.env src/cli/profile.ts",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "validate:e2e": "vitest run src/profile-pipeline/e2e.live.test.ts"
+    "validate:e2e": "vitest run src/profile-pipeline/e2e.live.test.ts",
+    "validate:judge": "vitest run src/profile-pipeline/judge.live.test.ts"
   },
   "dependencies": {
     "@google/genai": "2.29.0",

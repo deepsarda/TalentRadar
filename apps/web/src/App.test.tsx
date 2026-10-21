@@ -41,7 +41,7 @@ describe("TalentRadar application shell", () => {
     renderApp();
 
     expect(
-      await screen.findByRole("heading", { name: /shortlist teams by the work/i }),
+      await screen.findByRole("heading", { name: /talentradar/i, level: 1 }),
     ).toBeInTheDocument();
     expect(await screen.findByText(/0 live events/i)).toBeInTheDocument();
     expect(screen.queryByText(/fixture/i)).not.toBeInTheDocument();

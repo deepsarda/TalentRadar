@@ -72,11 +72,15 @@ describe("calibration scoring", () => {
 });
 
 describe("calibration set format", () => {
-  it("ships empty and valid: labels come from real people, never from code", async () => {
+  it("ships a valid set: nothing fabricated, and still valid once people fill it in", async () => {
     const file = await readFile(new URL("./calibration-set.json", import.meta.url), "utf8");
     const set = CalibrationSetSchema.parse(JSON.parse(file));
-    expect(set.entries).toEqual([]);
-    expect(compositionWarnings(set)).toHaveLength(3);
+    // Labels must come from people reading code. This used to assert the set was empty, which
+    // would fail the build the day the first real entry was added. Validity is the invariant now;
+    // the CI gate (calibration-gate.ts) enforces completeness and accuracy once there are 10.
+    expect(set.entries.length).toBeLessThanOrEqual(10);
+    expect(set.entries.every((entry) => !entry.repository.startsWith("test-only/"))).toBe(true);
+    expect(compositionWarnings(set).length).toBeLessThanOrEqual(3);
   });
 
   it("rejects unknown skill ids, out-of-range scores and few-shot repos", () => {

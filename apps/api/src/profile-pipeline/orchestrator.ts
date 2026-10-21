@@ -77,6 +77,24 @@ export function createProfileOrchestrator(db: Db) {
           { profileId, personId, assessmentId },
           { maxAttempts: 1, dedupeKey: `${profileId}:aggregate_profile` },
         );
+        return;
+      }
+
+      if (job.type === "judge_second_opinion") {
+        // A skipped job (the profile was rebuilt meanwhile) has nothing to merge.
+        if (result?.["skipped"]) return;
+        const assessmentId = stringProperty(result, "assessmentId");
+        const secondAssessmentId = stringProperty(result, "secondAssessmentId");
+        if (!assessmentId || !secondAssessmentId) {
+          throw new Error("Second-opinion job produced no assessment ids");
+        }
+        // One re-aggregation per second assessment; the first aggregation's key is already used.
+        await enqueueJob(
+          db,
+          "aggregate_profile",
+          { profileId, personId, assessmentId, secondAssessmentId },
+          { maxAttempts: 1, dedupeKey: `${profileId}:aggregate_profile:${secondAssessmentId}` },
+        );
       }
     },
 

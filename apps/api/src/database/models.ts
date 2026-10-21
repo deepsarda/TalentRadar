@@ -1,5 +1,6 @@
 import type {
   DecidedTeam,
+  JudgmentDisagreement,
   PersonProfile,
   QuotaReport,
   QuotaRule,
@@ -7,6 +8,7 @@ import type {
   RankingParams,
   Requirement,
   SelectionOverride,
+  SensitivityResult,
   Team,
 } from "@talentradar/shared";
 import type { ObjectId } from "mongodb";
@@ -64,6 +66,9 @@ export interface AssessmentDocument {
   /** Absent on assessments stored before rubric/sampler versions were recorded. */
   rubricVersion?: string;
   samplerVersion?: string;
+  /** Absent means a primary assessment. A second opinion is merged with `basedOnAssessmentId`. */
+  kind?: "primary" | "second_opinion";
+  basedOnAssessmentId?: ObjectId;
   createdAt: Date;
 }
 
@@ -72,6 +77,10 @@ export interface ProfileDocument extends Omit<PersonProfile, "personId"> {
   personId: ObjectId;
   status: "pending" | "building" | "ready" | "failed";
   assessmentId?: ObjectId;
+  /** Set once a second judge's assessment has been merged into this profile's skills. */
+  secondAssessmentId?: ObjectId;
+  /** How far the primary and second judge were apart, for the organizer's evidence view. */
+  judgeDisagreement?: JudgmentDisagreement;
   version: number;
   repos: Array<{ fullName: string; sha?: string; included: boolean }>;
   builtAt?: Date;
@@ -111,6 +120,8 @@ export interface HackathonDocument {
   ranking: RankingParams;
   quotas: QuotaRule[];
   collegeAliases: Record<string, string[]>;
+  /** Per-event random salt for blind review pseudonymization. */
+  blindSalt?: string;
   /**
    * The taxonomy the requirements' skill ids and the rubric their target levels refer to, set
    * from @talentradar/shared when requirements are written. Absent on older documents.
@@ -235,6 +246,10 @@ export interface ShortlistRunDocument {
   snapshot?: ShortlistRunSnapshot;
   published: boolean;
   publishedAt?: Date;
+  /** Sensitivity analysis results. */
+  sensitivity?: SensitivityResult;
+  /** Post-event outcome ratings per team, set by organizers after the event ends. */
+  outcomeRatings?: OutcomeRating[];
   createdBy: ObjectId;
   createdAt: Date;
 }
@@ -244,7 +259,9 @@ export type JobType =
   | "render_cv"
   | "judge_person"
   | "aggregate_profile"
-  | "import_row";
+  | "judge_second_opinion"
+  | "import_row"
+  | "prewarm_event_profiles";
 
 export interface JobProgressEvent {
   at: Date;
@@ -301,8 +318,10 @@ export type AuditAction =
   | "run.saved"
   | "run.published"
   | "override.added"
+  | "second_opinion.requested"
   | "correction.resolved"
-  | "correction.dismissed";
+  | "correction.dismissed"
+  | "outcome.rated";
 
 /** Append-only: written with insertOne, never updated or deleted. */
 export interface AuditEntryDocument {
@@ -330,4 +349,14 @@ export interface CorrectionDocument {
   resolution?: { by: ObjectId; at: Date; note?: string };
   createdAt: Date;
   updatedAt: Date;
+}
+
+/** 1–5 post-event outcome rating for one team in a shortlist run. */
+export interface OutcomeRating {
+  teamId: string;
+  /** 1 = did not perform, 5 = standout performer */
+  rating: 1 | 2 | 3 | 4 | 5;
+  note?: string | undefined;
+  by: ObjectId;
+  at: Date;
 }

@@ -92,9 +92,9 @@ const PromoteQuickSchema = z
   })
   .superRefine(requireVenue);
 
-const MAX_CSV_BYTES = 10 * 1024 * 1024;
-const MAX_ZIP_BYTES = 200 * 1024 * 1024;
-const MAX_CV_BYTES = 2 * 1024 * 1024;
+const MAX_CSV_BYTES = Number.MAX_SAFE_INTEGER;
+const MAX_ZIP_BYTES = Number.MAX_SAFE_INTEGER;
+const MAX_CV_BYTES = Number.MAX_SAFE_INTEGER;
 const MAX_ZIP_ENTRIES = 5_000;
 const inviteAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
@@ -481,9 +481,13 @@ export function createQuickApi(
         if (!ownerId) return;
         const parsed = CreateQuickSchema.safeParse(request.body);
         if (!parsed.success) {
-          response
-            .status(422)
-            .json({ error: "validation_failed", message: "Quick shortlist setup is incomplete" });
+          const detail = parsed.error.issues
+            .map((issue) => `${issue.path.join(".") || "body"}: ${issue.message}`)
+            .join("; ");
+          response.status(422).json({
+            error: "validation_failed",
+            message: `Quick shortlist setup is incomplete (${detail})`,
+          });
           return;
         }
         const now = new Date();

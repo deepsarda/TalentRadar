@@ -137,6 +137,7 @@ export function startWorker(
           return;
         }
         const message = errorMessage(error);
+        console.error(`Job ${job.type} (${job._id.toHexString()}) failed:`, message, error);
         const delayMs =
           error instanceof RetryLaterError
             ? Math.max(0, error.retryAt.getTime() - Date.now())

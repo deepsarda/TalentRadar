@@ -30,3 +30,35 @@ export function assessmentCacheKey(
     )
     .digest("hex");
 }
+
+/**
+ * Marks a second-opinion assessment. The second judge reads the repositories in reverse order, so
+ * the version names that: change either the order or the prompt and this must change with it.
+ */
+export const secondOpinionPromptVersion = `${promptVersion}+second.v1`;
+
+/** The model that gives the second opinion; the primary model when none is configured. */
+export function secondOpinionModel(
+  environment: Pick<Environment, "GEMINI_MODEL" | "GEMINI_SECOND_OPINION_MODEL">,
+): string {
+  return environment.GEMINI_SECOND_OPINION_MODEL ?? environment.GEMINI_MODEL;
+}
+
+/**
+ * Cache key of a second opinion: the primary assessment's key (which already covers repositories
+ * at their commits, the CV hash and every version) plus the second model and prompt version.
+ */
+export function secondOpinionCacheKey(
+  primaryCacheKey: string,
+  environment: Pick<Environment, "GEMINI_MODEL" | "GEMINI_SECOND_OPINION_MODEL">,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        primary: primaryCacheKey,
+        model: secondOpinionModel(environment),
+        prompt: secondOpinionPromptVersion,
+      }),
+    )
+    .digest("hex");
+}

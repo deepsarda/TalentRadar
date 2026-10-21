@@ -56,20 +56,71 @@ const confidenceFactors: Record<Confidence, number> = {
   low: 0.6,
 };
 
-function recencyFactor(pushedAt: string, now: Date): number {
-  const age = now.getTime() - Date.parse(pushedAt);
-  if (age <= 365.25 * 24 * 60 * 60 * 1000) return 1;
-  if (age <= 2 * 365.25 * 24 * 60 * 60 * 1000) return 0.8;
-  return 0.6;
+/*
+ * Skill aggregation blend. A person's level in a skill is mostly what their best repository shows
+ * (an expert who also has two small, older demos must not be dragged down to the average), with
+ * the weighted average as a counterweight so one lucky repository cannot carry the skill alone.
+ * Both shares must sum to 1 so the blended level stays on the 1..5 scale.
+ */
+export const SKILL_TOP_SHARE = 0.6;
+export const SKILL_AVERAGE_SHARE = 0.4;
+/** At most this many repositories feed one skill; the top three by weighted level. */
+export const MAX_REPOS_PER_SKILL = 3;
+
+/** exp(-ageYears / RECENCY_TIME_CONSTANT_YEARS): 1 year old is 0.72, 2 years 0.51, 3 years 0.37. */
+export const RECENCY_TIME_CONSTANT_YEARS = 3;
+/** Old work still counts for something: the factor never falls below this. */
+export const RECENCY_FLOOR = 0.4;
+const MILLISECONDS_PER_YEAR = 365.25 * 24 * 60 * 60 * 1000;
+
+/** Maps a push timestamp to a weight in [RECENCY_FLOOR, 1]. Injectable so tests can pin it. */
+export type RecencyFunction = (pushedAt: string, now: Date) => number;
+
+/** Continuous decay with a floor, replacing the old 1 / 0.8 / 0.6 buckets and their cliffs. */
+export const recencyFactor: RecencyFunction = (pushedAt, now) => {
+  const ageYears = Math.max(0, now.getTime() - Date.parse(pushedAt)) / MILLISECONDS_PER_YEAR;
+  const decayed = Math.exp(-ageYears / RECENCY_TIME_CONSTANT_YEARS);
+  return Number.isFinite(decayed) ? Math.max(RECENCY_FLOOR, decayed) : RECENCY_FLOOR;
+};
+
+/** The most the upstream-contribution signal can add to any skill level. */
+export const MAX_UPSTREAM_BONUS = 0.5;
+/** Each merged pull request into someone else's repository is worth this much, up to the cap. */
+export const UPSTREAM_BONUS_PER_PR = 0.1;
+/** Skills below this level are not lifted: a tutorial-level skill is not helped by outside PRs. */
+export const UPSTREAM_BONUS_MIN_LEVEL = 2;
+
+/** Facts about a person (not one repository) that come from deterministic GitHub reads. */
+export interface ParticipantSignals {
+  /** Pull requests by this person, merged into repositories they do not own. */
+  mergedUpstreamPullRequests: number;
 }
 
-function repoWeight(repository: RepositoryJudgment, now: Date): number {
+/** Bounded bonus for merged upstream pull requests: linear, then capped at MAX_UPSTREAM_BONUS. */
+export function upstreamBonus(mergedUpstreamPullRequests: number): number {
+  if (!Number.isFinite(mergedUpstreamPullRequests) || mergedUpstreamPullRequests <= 0) return 0;
+  return Math.min(MAX_UPSTREAM_BONUS, mergedUpstreamPullRequests * UPSTREAM_BONUS_PER_PR);
+}
+
+export interface AggregateOptions {
+  /** Defaults to the continuous recencyFactor. */
+  recency?: RecencyFunction;
+  /** Deterministic GitHub signals; omitted means no bonus (profiles built before they existed). */
+  signals?: ParticipantSignals;
+}
+
+function repoWeight(repository: RepositoryJudgment, now: Date, recency: RecencyFunction): number {
   const authorship = Math.min(1, Math.max(0.2, repository.authorship));
   return (
     authorship *
-    recencyFactor(repository.pushedAt, now) *
+    recency(repository.pushedAt, now) *
     (originalityFactors[repository.originality] ?? 0)
   );
+}
+
+/** Originality 1..5 mapped linearly onto 0..1 (1 -> 0, 5 -> 1). */
+export function originalityNovelty(originality: number): number {
+  return Math.min(1, Math.max(0, (originality - 1) / 4));
 }
 
 function round(value: number): number {
@@ -81,7 +132,10 @@ export function aggregateProfile(
   displayName: string,
   rawJudgment: ProfileJudgment,
   now = new Date(),
+  options: AggregateOptions = {},
 ): PersonProfile {
+  const recency = options.recency ?? recencyFactor;
+  const bonus = upstreamBonus(options.signals?.mergedUpstreamPullRequests ?? 0);
   const judgment = ProfileJudgmentSchema.parse(rawJudgment);
   const skillIds = new Set([
     ...judgment.repos.flatMap((repository) => repository.skills.map((skill) => skill.id)),
@@ -93,7 +147,7 @@ export function aggregateProfile(
       .flatMap((repository) => {
         const skill = repository.skills.find((candidate) => candidate.id === skillId);
         if (!skill) return [];
-        const weight = repoWeight(repository, now);
+        const weight = repoWeight(repository, now, recency);
         return [{ repository, skill, weight, weightedLevel: weight * skill.level }];
       })
       .sort(
@@ -101,14 +155,24 @@ export function aggregateProfile(
           right.weightedLevel - left.weightedLevel ||
           left.repository.repo.localeCompare(right.repository.repo),
       )
-      .slice(0, 3);
+      .slice(0, MAX_REPOS_PER_SKILL);
     const claim = judgment.cv.claims.find((candidate) => candidate.id === skillId);
     const totalWeight = contributions.reduce((sum, contribution) => sum + contribution.weight, 0);
+    // The best repository (highest weighted level) sets the top level; the weighted average
+    // over all counted repositories tempers it. One repository gives the same level as before.
+    const blended = (() => {
+      const best = contributions[0];
+      if (!best) return claim?.level ?? 1;
+      const topLevel = best.skill.level;
+      const weightedAverage =
+        contributions.reduce((sum, contribution) => sum + contribution.weightedLevel, 0) /
+        totalWeight;
+      return SKILL_TOP_SHARE * topLevel + SKILL_AVERAGE_SHARE * weightedAverage;
+    })();
     const level =
-      contributions.length > 0
-        ? contributions.reduce((sum, contribution) => sum + contribution.weightedLevel, 0) /
-          totalWeight
-        : (claim?.level ?? 1);
+      contributions.length > 0 && blended >= UPSTREAM_BONUS_MIN_LEVEL
+        ? Math.min(5, blended + bonus)
+        : blended;
     const confidence: Confidence =
       contributions.length >= 2 || (contributions.length === 1 && claim)
         ? "high"
@@ -136,14 +200,17 @@ export function aggregateProfile(
     };
   });
 
-  const novelty = Math.max(
-    0,
-    ...judgment.repos.map((repository) => {
-      if (!repository.skills.some((skill) => skill.level >= 3)) return 0;
-      if (repository.originality === 5) return 1;
-      if (repository.originality === 4) return 0.25;
-      return 0;
-    }),
+  // Continuous: the best repository's originality (1..5) scaled to 0..1, counted only when the
+  // repository shows at least one level-3 skill, as before. Replaces the 1 / 0.25 / 0 buckets.
+  const novelty = round(
+    Math.max(
+      0,
+      ...judgment.repos.map((repository) =>
+        repository.skills.some((skill) => skill.level >= 3)
+          ? originalityNovelty(repository.originality)
+          : 0,
+      ),
+    ),
   );
 
   return {

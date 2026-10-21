@@ -72,4 +72,7 @@ export const workedExampleParams = {
   minFit: 0,
   minTeamSize: 1,
   maxTeamSize: 4,
+  // The specification's worked example predates the novelty blend: it takes the single most
+  // novel member. 1 keeps its published scores (82.0375 / 75.9175) reproducible.
+  noveltyMaxShare: 1,
 } satisfies RankingParams;

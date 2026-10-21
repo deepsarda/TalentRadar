@@ -11,6 +11,7 @@ import { collections } from "../database/mongo.js";
 import { githubFetch } from "../jobs/rate-limit.js";
 import type { JobContext } from "../jobs/worker.js";
 import { runCommand } from "./commands.js";
+import { fetchCommitActivity, fetchUpstreamContributions } from "./github-signals.js";
 
 const FetchRepositoryPayloadSchema = z.object({
   profileId: z.string().length(24),
@@ -331,6 +332,12 @@ export async function fetchRepository(
     };
   }
 
+  // Deterministic signals for the judge and the aggregation; each is best-effort.
+  const [commitActivity, upstream] = await Promise.all([
+    fetchCommitActivity(input.repository, input.login, input.token, fetchImplementation, signal),
+    fetchUpstreamContributions(input.login, input.token, fetchImplementation, signal),
+  ]);
+
   const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" };
   const temporaryRoot = await mkdtemp(path.join(tmpdir(), "talentradar-repo-"));
   const checkout = path.join(temporaryRoot, "checkout");
@@ -406,6 +413,8 @@ export async function fetchRepository(
       pushedAt: input.pushedAt,
       authorship,
       languages,
+      ...(commitActivity ? { commitActivity } : {}),
+      ...(upstream ? { participant: upstream } : {}),
       ...facts,
     };
   } finally {

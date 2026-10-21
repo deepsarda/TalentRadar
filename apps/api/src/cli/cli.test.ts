@@ -81,7 +81,7 @@ describe("pnpm detect-report", () => {
       expect(await runDetectReport([plain], {}, out.log)).toBe(1);
       expect(out.text()).toContain("git checkout");
     } finally {
-      await rm(plain, { recursive: true, force: true });
+      await rm(plain, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   });
 });

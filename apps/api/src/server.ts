@@ -16,7 +16,9 @@ import { createAggregateProfileHandler } from "./profile-pipeline/aggregate.js";
 import { createRenderCvHandler } from "./profile-pipeline/cv.js";
 import { createJudgePersonHandler } from "./profile-pipeline/judge.js";
 import { createProfileOrchestrator } from "./profile-pipeline/orchestrator.js";
+import { createPrewarmProfilesHandler } from "./profile-pipeline/prewarm.js";
 import { createFetchRepositoryHandler } from "./profile-pipeline/repository.js";
+import { createSecondOpinionHandler } from "./profile-pipeline/second-opinion.js";
 import { createImportRowHandler } from "./quick/import-row.js";
 import { createQuickApi } from "./quick/quick-api.js";
 import { createShortlistApi } from "./shortlist/shortlist-api.js";
@@ -74,8 +76,10 @@ async function main(): Promise<void> {
             }),
             render_cv: createRenderCvHandler(database.db),
             judge_person: createJudgePersonHandler(database.db, environment),
+            judge_second_opinion: createSecondOpinionHandler(database.db, environment),
             aggregate_profile: createAggregateProfileHandler(database.db),
             import_row: createImportRowHandler(database.db, environment.SESSION_SECRET),
+            prewarm_event_profiles: createPrewarmProfilesHandler(database.db),
           },
           {
             ...(orchestrator
@@ -89,6 +93,7 @@ async function main(): Promise<void> {
       : undefined;
   const app = createApp({
     staticDirectory,
+    ...(appOrigin ? { allowedOrigins: [appOrigin] } : {}),
     ...(authentication ? { authentication } : {}),
     ...(publicEvents ? { publicEvents } : {}),
     ...(organizerEvents || participantApi || teamApi || shortlistApi || quickApi || correctionsApi

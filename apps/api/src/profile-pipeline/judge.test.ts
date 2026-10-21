@@ -18,8 +18,8 @@ import {
  * Bump promptVersion in packages/shared/src/taxonomy/versions.ts, then record both values here.
  */
 const pinnedPrompt = {
-  version: "v3",
-  fingerprint: "5f3f756c400c5d1d6c094a80336f3b4e0b04c97c602cd2c025e660195f660fb7",
+  version: "v4",
+  fingerprint: "26583780583e75727b1771e8e8e4281f596bfc1fb8d490578108939aa381aa1f",
 };
 
 interface SchemaNode {

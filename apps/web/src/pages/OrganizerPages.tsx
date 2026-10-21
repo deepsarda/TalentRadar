@@ -1353,12 +1353,14 @@ export function QuickShortlistPage() {
   });
 
   const requiredMappingReady = Boolean(mapping.name && mapping.email);
+  const validTeamSize =
+    minimumTeamSize >= 1 &&
+    minimumTeamSize <= 6 &&
+    maximumTeamSize >= 1 &&
+    maximumTeamSize <= 6 &&
+    minimumTeamSize <= maximumTeamSize;
   const stepReady = [
-    name.trim().length >= 3 &&
-      minimumTeamSize <= maximumTeamSize &&
-      capacity > 0 &&
-      csvFile &&
-      requirements.length > 0,
+    name.trim().length >= 3 && validTeamSize && capacity > 0 && csvFile && requirements.length > 0,
     requiredMappingReady,
     consent,
     status.data?.status === "ready",
@@ -1368,7 +1370,8 @@ export function QuickShortlistPage() {
       [name.trim().length >= 3, "add a name"],
       [Boolean(csvFile), "choose a CSV"],
       [requirements.length > 0, "add a skill"],
-      [minimumTeamSize <= maximumTeamSize && capacity > 0, "fix team size"],
+      [validTeamSize, "team size must be between 1 and 6"],
+      [capacity > 0, "enter capacity"],
       [Boolean(account.data) || account.isPending, "sign in first"],
     ]),
     firstMissing([

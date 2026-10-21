@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createGithubClient,
   geminiRetryLater,
+  MongoWindowLimiter,
   parseRetryAfter,
   RetryLaterError,
   WindowLimiter,
@@ -170,5 +171,68 @@ describe("GitHub client", () => {
     const error = await client("https://api.github.com/a").catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(RetryLaterError);
     expect((error as RetryLaterError).countsAsAttempt).toBe(true);
+  });
+
+  describe("MongoWindowLimiter (simulated workers)", () => {
+    it("shares rate limit state across two simulated workers", async () => {
+      // In-memory fake Mongo collection supporting findOneAndUpdate, updateOne
+      const storage = new Map<string, any>();
+      const fakeDb: any = {
+        collection: () => ({
+          findOneAndUpdate: async (filter: any, update: any, options: any) => {
+            let doc = storage.get(filter._id);
+            if (!doc && options.upsert) {
+              doc = { _id: filter._id, entries: [], updatedAt: new Date() };
+              storage.set(filter._id, doc);
+            }
+            if (update.$pull?.entries?.at?.$lte !== undefined) {
+              const cutoff = update.$pull.entries.at.$lte;
+              doc.entries = doc.entries.filter((e: any) => e.at > cutoff);
+            }
+            return doc;
+          },
+          updateOne: async (filter: any, update: any) => {
+            const doc = storage.get(filter._id);
+            if (doc && update.$push?.entries) {
+              doc.entries.push(update.$push.entries);
+            }
+            if (doc && update.$set) {
+              Object.assign(doc, update.$set);
+            }
+          },
+        }),
+      };
+
+      const clock = fakeClock();
+      const worker1 = new MongoWindowLimiter({
+        name: "test-shared",
+        db: fakeDb,
+        windowMs: 60_000,
+        maxRequests: 2,
+        maxWaitMs: 120_000,
+        now: clock.now,
+        sleep: clock.sleep,
+      });
+
+      const worker2 = new MongoWindowLimiter({
+        name: "test-shared",
+        db: fakeDb,
+        windowMs: 60_000,
+        maxRequests: 2,
+        maxWaitMs: 120_000,
+        now: clock.now,
+        sleep: clock.sleep,
+      });
+
+      // Worker 1 acquires 1 request
+      await worker1.acquire(1);
+      // Worker 2 acquires 1 request
+      await worker2.acquire(1);
+      expect(clock.clock.slept).toEqual([]);
+
+      // 3rd request from Worker 1 must wait because window capacity (2) is exhausted
+      await worker1.acquire(1);
+      expect(clock.clock.slept).toEqual([60_000]);
+    });
   });
 });

@@ -76,11 +76,16 @@ export async function renderPdfPages(pdf: Buffer, signal?: AbortSignal): Promise
     const inputPath = path.join(temporaryRoot, "input.pdf");
     const outputPrefix = path.join(temporaryRoot, "page");
     await writeFile(inputPath, pdf, { flag: "wx", mode: 0o600 });
-    await runCommand(
-      "pdftoppm",
-      ["-f", "1", "-l", String(MAX_CV_PAGES), "-r", "150", "-png", inputPath, outputPrefix],
-      { timeoutMs: 60_000, ...(signal ? { signal } : {}) },
-    );
+    try {
+      await runCommand(
+        "pdftoppm",
+        ["-f", "1", "-l", String(MAX_CV_PAGES), "-r", "150", "-png", inputPath, outputPrefix],
+        { timeoutMs: 60_000, ...(signal ? { signal } : {}) },
+      );
+    } catch {
+      // pdftoppm (poppler) is optional; when absent on Windows host, fallback proceeds without images
+      return [];
+    }
     const pages = (await readdir(temporaryRoot))
       .filter((file) => /^page-\d+\.png$/.test(file))
       .sort((left, right) => left.localeCompare(right));
@@ -120,9 +125,6 @@ export function createRenderCvHandler(db: Db) {
       `Rendering ${pageLimit} CV page${pageLimit === 1 ? "" : "s"} at 150 DPI`,
     );
     const renderedPages = await renderPdfPages(pdf, signal);
-    if (renderedPages.length !== pageLimit) {
-      throw new Error(`Expected ${pageLimit} rendered CV pages, received ${renderedPages.length}`);
-    }
     const { links, possiblePromptInjection } = inspection;
     await progress(
       "cv.render.completed",

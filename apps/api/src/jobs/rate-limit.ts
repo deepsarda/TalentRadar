@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { setTimeout as sleepFor } from "node:timers/promises";
+import type { Db } from "mongodb";
 import { readEnvironment } from "../config/environment.js";
+import { collections } from "../database/mongo.js";
 import { backoffMs } from "./queue.js";
 
 /*
@@ -124,6 +126,120 @@ export class WindowLimiter {
   }
 }
 
+export interface LimiterDocument {
+  _id: string; // limiter name / key
+  entries: Array<{ at: number; units: number }>;
+  pausedUntil?: number;
+  updatedAt: Date;
+}
+
+export interface MongoWindowLimiterOptions extends WindowLimiterOptions {
+  db: Db;
+}
+
+/**
+ * Shared Mongo-backed sliding-window rate limiter using atomic findOneAndUpdate.
+ * Allows multiple worker processes to safely share token and request budgets.
+ */
+export class MongoWindowLimiter {
+  private readonly now: () => number;
+  private readonly sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+
+  constructor(private readonly options: MongoWindowLimiterOptions) {
+    this.now = options.now ?? Date.now;
+    this.sleep =
+      options.sleep ?? ((milliseconds, signal) => sleepFor(milliseconds, undefined, { signal }));
+  }
+
+  async acquire(estimatedUnits = 0, signal?: AbortSignal): Promise<Settle> {
+    const col = this.options.db.collection<LimiterDocument>(collections.rateLimits);
+    const key = this.options.name;
+
+    for (;;) {
+      const now = this.now();
+      const cutoff = now - this.options.windowMs;
+
+      // Atomic find and clean expired entries
+      const doc = await col.findOneAndUpdate(
+        { _id: key },
+        {
+          $pull: { entries: { at: { $lte: cutoff } } },
+          $setOnInsert: { _id: key, updatedAt: new Date(now) },
+        },
+        { upsert: true, returnDocument: "after" },
+      );
+
+      const entries = doc?.entries ?? [];
+      const pausedUntil = doc?.pausedUntil ?? 0;
+
+      let wait = Math.max(0, pausedUntil - now);
+      const { maxRequests, maxUnits } = this.options;
+
+      if (entries.length >= maxRequests) {
+        const oldestBlocking = entries[entries.length - maxRequests];
+        if (oldestBlocking) {
+          wait = Math.max(wait, oldestBlocking.at + this.options.windowMs - now);
+        }
+      }
+
+      if (maxUnits !== undefined && estimatedUnits > 0 && entries.length > 0) {
+        let used = entries.reduce((sum, e) => sum + e.units, 0);
+        let idx = 0;
+        while (idx < entries.length && used + estimatedUnits > maxUnits) {
+          used -= entries[idx]?.units ?? 0;
+          idx++;
+        }
+        if (idx > 0 && entries[idx - 1]) {
+          wait = Math.max(wait, entries[idx - 1]!.at + this.options.windowMs - now);
+        }
+      }
+
+      if (wait === 0) {
+        const entryId = Math.random().toString(36).slice(2);
+        const addedAt = this.now();
+        await col.updateOne(
+          { _id: key },
+          {
+            $push: {
+              entries: {
+                at: addedAt,
+                units: Math.max(0, estimatedUnits),
+                id: entryId,
+              } as unknown as { at: number; units: number },
+            },
+            $set: { updatedAt: new Date(addedAt) },
+          },
+        );
+
+        return (actualUnits: number) => {
+          void col.updateOne(
+            { _id: key, "entries.id": entryId },
+            { $set: { "entries.$.units": Math.max(0, actualUnits) } },
+          );
+        };
+      }
+
+      if (wait > this.options.maxWaitMs) {
+        throw new RetryLaterError(
+          `${this.options.name} rate limit reached; retrying later`,
+          new Date(now + wait),
+        );
+      }
+
+      await this.sleep(wait, signal);
+    }
+  }
+
+  async pauseUntil(at: number): Promise<void> {
+    const col = this.options.db.collection<LimiterDocument>(collections.rateLimits);
+    await col.updateOne(
+      { _id: this.options.name },
+      { $max: { pausedUntil: at }, $set: { updatedAt: new Date(this.now()) } },
+      { upsert: true },
+    );
+  }
+}
+
 const environment = readEnvironment();
 
 /**
@@ -158,17 +274,30 @@ export function geminiRetryLater(
   now = Date.now(),
 ): RetryLaterError | undefined {
   const status = (error as { status?: unknown } | null)?.status;
-  if (status !== 429 && status !== 503) return undefined;
   const message = error instanceof Error ? error.message : "";
+  const isNetworkFailure =
+    message.includes("fetch failed") ||
+    message.includes("SocketError") ||
+    message.includes("UND_ERR_SOCKET") ||
+    message.includes("other side closed") ||
+    message.includes("ECONNRESET") ||
+    message.includes("ETIMEDOUT");
+
+  if (status !== 429 && status !== 503 && !isNetworkFailure) return undefined;
+
   const retryDelay = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(message)?.[1];
   const wait = retryDelay
     ? Math.ceil(Number(retryDelay) * 1000)
     : backoffMs(attempt, { baseMs: 5_000, capMs: 10 * 60_000 });
   if (status === 429) limiter.pauseUntil(now + wait);
   return new RetryLaterError(
-    status === 429 ? "Gemini rate limited; retrying later" : "Gemini unavailable; retrying later",
+    status === 429
+      ? "Gemini rate limited; retrying later"
+      : isNetworkFailure
+        ? "Gemini connection reset; retrying shortly"
+        : "Gemini unavailable; retrying later",
     new Date(now + wait),
-    { countsAsAttempt: status === 503 },
+    { countsAsAttempt: status === 503 || isNetworkFailure },
   );
 }
 

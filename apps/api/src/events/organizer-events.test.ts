@@ -214,4 +214,21 @@ describe("organizer audit history", () => {
       "timeline.eventStartsAt: 2026-11-28 03:30 → 2026-11-29 03:30",
     ]);
   });
+
+  it("enqueues pre-warming job and reports status", async () => {
+    const fake = fakeDb(draftEvent());
+    const app = appWith(fake.db);
+    const eventId = fake.current()._id.toHexString();
+
+    const postRes = await request(app).post(`/api/organizer/events/${eventId}/prewarm`).expect(202);
+
+    expect(postRes.body.queued).toBe(true);
+    expect(postRes.body.jobId).toBeTruthy();
+    expect(postRes.body.status).toBe("queued");
+    expect(fake.writes).toContain("jobs.insertOne");
+
+    const getRes = await request(app).get(`/api/organizer/events/${eventId}/prewarm`).expect(200);
+
+    expect(getRes.body.status).toBe("idle");
+  });
 });

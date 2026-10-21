@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type CSSProperties, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ActionAnchor,
@@ -18,26 +18,6 @@ import {
 } from "../components/ui";
 import { getCurrentUser, getPublicEvent, getPublicEvents, type PublicEvent } from "../lib/api";
 import { skillLabel } from "../lib/skills";
-
-const banner = `████████╗ █████╗ ██╗     ███████╗███╗   ██╗████████╗██████╗  █████╗ ██████╗  █████╗ ██████╗ 
-╚══██╔══╝██╔══██╗██║     ██╔════╝████╗  ██║╚══██╔══╝██╔══██╗██╔══██╗██╔══██╗██╔══██╗██╔══██╗
-   ██║   ███████║██║     █████╗  ██╔██╗ ██║   ██║   ██████╔╝███████║██║  ██║███████║██████╔╝
-   ██║   ██╔══██║██║     ██╔══╝  ██║╚██╗██║   ██║   ██╔══██╗██╔══██║██║  ██║██╔══██║██╔══██╗
-   ██║   ██║  ██║███████╗███████╗██║ ╚████║   ██║   ██║  ██║██║  ██║██████╔╝██║  ██║██║  ██║
-   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝`;
-
-const bannerNarrow = `████████╗ █████╗ ██╗     ███████╗███╗   ██╗████████╗
-╚══██╔══╝██╔══██╗██║     ██╔════╝████╗  ██║╚══██╔══╝
-   ██║   ███████║██║     █████╗  ██╔██╗ ██║   ██║   
-   ██║   ██╔══██║██║     ██╔══╝  ██║╚██╗██║   ██║   
-   ██║   ██║  ██║███████╗███████╗██║ ╚████║   ██║   
-   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═══╝   ╚═╝   
-██████╗  █████╗ ██████╗  █████╗ ██████╗ 
-██╔══██╗██╔══██╗██╔══██╗██╔══██╗██╔══██╗
-██████╔╝███████║██║  ██║███████║██████╔╝
-██╔══██╗██╔══██║██║  ██║██╔══██║██╔══██╗
-██║  ██║██║  ██║██████╔╝██║  ██║██║  ██║
-╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝`;
 
 const eventTabs = [
   { id: "live", label: "live", status: "open" },
@@ -67,9 +47,12 @@ function EventSessions({ events, user }: { events: PublicEvent[]; user: string }
       command={`talentradar events ls --${tab}`}
     >
       {shown.length === 0 ? (
-        <p className="dim px-4">
-          0 {tab} events.
-          {tab === "live" ? " Check upcoming, or create one from the organizer console." : ""}
+        <p className="dim flex items-start gap-3 px-1 text-sm sm:text-base">
+          {infoIcon}
+          <span>
+            0 {tab} events.
+            {tab === "live" ? " Check upcoming, or create one from the organizer console." : ""}
+          </span>
         </p>
       ) : (
         <div className="tui-list">
@@ -94,18 +77,73 @@ function EventSessions({ events, user }: { events: PublicEvent[]; user: string }
                 </span>
               </span>
               <span className="dim hidden sm:inline" aria-hidden="true">
-                {event.slug}/
+                →
               </span>
             </Link>
           ))}
         </div>
       )}
-      <p className="dim mt-2 px-4">
-        {shown.length} {shown.length === 1 ? "entry" : "entries"}. Enter opens the event page.
+      <p className="dim mt-3 flex items-start gap-3 px-1 text-sm sm:text-base">
+        {infoIcon}
+        <span>
+          {shown.length} {shown.length === 1 ? "event" : "events"}. Select one to open its page.
+        </span>
       </p>
     </TermTabs>
   );
 }
+
+const infoIcon = (
+  <svg
+    viewBox="0 0 24 24"
+    width="18"
+    height="18"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+    className="mt-0.5 shrink-0"
+  >
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v5M12 8h.01" />
+  </svg>
+);
+
+const arrow = (
+  <svg
+    viewBox="0 0 24 24"
+    width="16"
+    height="16"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </svg>
+);
+
+const heroPoints = [
+  {
+    label: "No black box",
+    description: "Verified code evidence",
+    path: "M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zM12 12l8-4.5M12 12v9M12 12L4 7.5",
+  },
+  {
+    label: "Fully tunable",
+    description: "Live what-if simulation",
+    path: "M4 7h8M16 7h4M4 17h4M12 17h8M14 5v4M10 15v4",
+  },
+  {
+    label: "Blind review",
+    description: "Bias-free evaluation",
+    path: "M3 3l18 18M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 8.5 4 9.5 6a14 14 0 0 1-2.4 3.2M6.5 7.6A14 14 0 0 0 2.5 12c1 2 4.5 6 9.5 6 1.5 0 2.8-.4 4-.9",
+  },
+];
 
 export function LandingPage() {
   const events = useQuery({ queryKey: ["public-events"], queryFn: getPublicEvents });
@@ -113,33 +151,106 @@ export function LandingPage() {
   const user = account.data?.login ?? "guest";
 
   return (
-    <div className="mx-auto grid max-w-6xl gap-14 py-4">
-      <section className="grid gap-10">
-        <div aria-hidden="true">
-          <pre className="banner glow hidden sm:block">{banner}</pre>
-          <pre className="banner narrow glow sm:hidden">{bannerNarrow}</pre>
-        </div>
-        <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
-          <div className="grid gap-6">
-            <h1 className="font-display text-[44px] leading-[0.95] text-accent sm:text-[60px]">
-              Shortlist teams by the work they can show.
-            </h1>
-            <p className="dim text-lg">Skill profiles from real code. Rankings you can explain.</p>
-            <div className="flex flex-wrap gap-3">
-              <ActionLink to="/organizer" tone="primary">
-                Organizer console
-              </ActionLink>
-              <ActionLink to="/participant">Participant portal</ActionLink>
+    <div className="mx-auto flex w-full max-w-5xl flex-col items-center gap-6 py-4 sm:py-6">
+      {/* Hero Header */}
+      <section className="flex w-full flex-col items-center gap-3 text-center">
+        <span className="hero-badge text-xs px-3.5 py-1 font-semibold">
+          Fair & Explainable Shortlisting
+        </span>
+        <h1 className="font-display tracking-tight text-5xl sm:text-7xl font-black text-white leading-tight">
+          TALENTRADAR
+        </h1>
+        <p className="max-w-2xl text-base sm:text-xl font-medium text-[var(--accent)]">
+          Skill profiles from real code. Rankings you can explain.
+        </p>
+
+        {/* Portal Entry Placements */}
+        <div className="mt-2.5 grid w-full max-w-2xl grid-cols-1 gap-4 sm:grid-cols-2">
+          <Link
+            to="/organizer"
+            className="group flex items-center justify-between rounded-2xl border border-[var(--line)] bg-[var(--raised)] px-6 py-4.5 text-left transition-all hover:border-[var(--accent)] hover:shadow-lg"
+          >
+            <div>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent)]">
+                Organizers
+              </span>
+              <h3 className="text-lg font-bold text-white">Organizer Console</h3>
+              <p className="text-xs sm:text-sm text-[var(--dim)]">Manage events & shortlists</p>
             </div>
-          </div>
-          <section id="events">
-            {events.isPending ? <LoadingState label="talentradar events ls" /> : null}
-            {events.isError ? (
-              <ErrorState message={events.error.message} retry={() => void events.refetch()} />
-            ) : null}
-            {events.data ? <EventSessions events={events.data} user={user} /> : null}
-          </section>
+            <span className="text-base font-semibold text-[var(--accent)] transition-transform group-hover:translate-x-1.5">
+              {arrow}
+            </span>
+          </Link>
+
+          <Link
+            to="/participant"
+            className="group flex items-center justify-between rounded-2xl border border-[var(--line)] bg-[var(--raised)] px-6 py-4.5 text-left transition-all hover:border-[var(--dim)] hover:shadow-lg"
+          >
+            <div>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--dim)]">
+                Participants
+              </span>
+              <h3 className="text-lg font-bold text-white">Participant Portal</h3>
+              <p className="text-xs sm:text-sm text-[var(--dim)]">View skills & status</p>
+            </div>
+            <span className="text-base font-semibold text-white transition-transform group-hover:translate-x-1.5">
+              {arrow}
+            </span>
+          </Link>
         </div>
+
+        {/* 3 Value Pillars */}
+        <div className="mt-2 grid w-full max-w-3xl grid-cols-1 gap-3 sm:grid-cols-3">
+          {heroPoints.map((point) => (
+            <div
+              key={point.label}
+              className="flex items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--raised)]/60 px-4 py-3 text-left transition-colors"
+            >
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[var(--accent-soft)]">
+                <svg
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="none"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="stroke-[var(--accent)]"
+                  aria-hidden="true"
+                >
+                  <path d={point.path} />
+                </svg>
+              </span>
+              <div>
+                <h4 className="text-sm font-semibold text-white leading-snug">{point.label}</h4>
+                <p className="text-xs text-[var(--dim)] leading-snug">{point.description}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Hackathons Section */}
+      <section
+        id="events"
+        className="grid w-full gap-3.5 rounded-2xl border border-[var(--line)] bg-[var(--raised)]/40 p-6 sm:p-7 [&_.term]:border-0 [&_.term]:bg-transparent [&_.term]:overflow-visible [&_.tui-tabs]:px-0 [&_.tui-tabs]:pt-0 [&_.tui-tabs]:pb-3"
+      >
+        <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
+          <div>
+            <h2 className="font-display text-xl sm:text-2xl font-bold text-white">Hackathons</h2>
+            <p className="text-sm sm:text-base text-[var(--dim)]">
+              Public events accepting registrations
+            </p>
+          </div>
+          <Link to="/organizer" className="text-sm sm:text-base font-medium text-[var(--accent)] hover:underline">
+            Host a hackathon →
+          </Link>
+        </div>
+        {events.isPending ? <LoadingState label="Loading events" /> : null}
+        {events.isError ? (
+          <ErrorState message={events.error.message} retry={() => void events.refetch()} />
+        ) : null}
+        {events.data ? <EventSessions events={events.data} user={user} /> : null}
       </section>
     </div>
   );
@@ -204,16 +315,12 @@ export function PublicEventPage() {
               .join(" · ")}
           </span>
         </p>
-        <h1 className="font-display text-[48px] leading-none text-accent sm:text-[72px]">
-          <span className="typed" style={{ "--chars": data.name.length } as CSSProperties}>
-            {data.name}
-          </span>
-        </h1>
+        <h1 className="font-display text-[32px] leading-tight sm:text-[44px]">{data.name}</h1>
         {data.tagline ? <p className="text-xl">{data.tagline}</p> : null}
         <div className="mt-2 flex flex-wrap items-end gap-x-10 gap-y-4">
           {remaining ? (
             <p className="grid">
-              <span className="font-display text-5xl leading-none text-warn glow">{remaining}</span>
+              <span className="font-display text-5xl leading-none text-warn">{remaining}</span>
               <span className="dim">until {next.label}</span>
             </p>
           ) : null}

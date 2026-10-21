@@ -31,6 +31,7 @@ export const collections = {
   quickImports: "quick_imports",
   auditEntries: "audit_entries",
   corrections: "corrections",
+  rateLimits: "rate_limits",
 } as const;
 
 export interface TalentRadarDatabase {

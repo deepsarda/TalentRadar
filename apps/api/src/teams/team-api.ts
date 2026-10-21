@@ -19,6 +19,7 @@ import type {
 } from "../database/models.js";
 import { collections } from "../database/mongo.js";
 import type { ApiModule } from "../events/organizer-events.js";
+import { teamWarning } from "./team-warning.js";
 
 const TeamNameSchema = z.object({
   eventId: z.string().length(24),
@@ -295,6 +296,12 @@ export function createTeamApi(db: Db, authentication: Authentication): ApiModule
             registrationClosesAt: event.timeline?.registrationClosesAt.toISOString(),
           },
           team: team ? await teamResponse(db, team) : null,
+          teamWarning: teamWarning({
+            minTeamSize: event.teamSize.min,
+            registrationClosesAt: event.timeline?.registrationClosesAt,
+            hasTeam: Boolean(team),
+            now: new Date(),
+          }),
           personId: person._id.toHexString(),
         });
       });

@@ -2,7 +2,6 @@ import type {
   AnchorHTMLAttributes,
   ButtonHTMLAttributes,
   ComponentProps,
-  CSSProperties,
   InputHTMLAttributes,
   PropsWithChildren,
   ReactNode,
@@ -15,7 +14,7 @@ import { splitSkills } from "../lib/skills";
 
 type Tone = "primary" | "default" | "danger" | "quiet";
 
-/** A bordered box whose title sits in the top border, lazygit style. */
+/** A white card with a title row, a body and an optional footnote. */
 export function Pane({
   title,
   meta,
@@ -26,9 +25,9 @@ export function Pane({
   children,
 }: PropsWithChildren<{
   title: ReactNode;
-  /** Short right-aligned note in the top border: a count, a state. */
+  /** Short right-aligned note in the title row: a count, a state. */
   meta?: ReactNode;
-  /** Bottom-border note, e.g. "3 of 12". */
+  /** Footnote under the body, e.g. "3 of 12". */
   foot?: ReactNode;
   active?: boolean;
   /** Remove inner padding so lists and tables run edge to edge. */
@@ -48,14 +47,13 @@ export function Pane({
 }
 
 /**
- * A GitHub avatar, fetched at half its display size and drawn with hard pixels to sit with the
- * terminal type. Hidden (not a broken-image icon) if the login has no avatar.
+ * A round GitHub avatar. Hidden (not a broken-image icon) if the login has no avatar.
  */
 export function Avatar({ login, size = 32 }: { login: string; size?: number }) {
   return (
     <img
       className="tui-avatar"
-      src={`https://github.com/${encodeURIComponent(login)}.png?size=${Math.ceil(size / 2)}`}
+      src={`https://github.com/${encodeURIComponent(login)}.png?size=${size * 2}`}
       alt=""
       width={size}
       height={size}
@@ -141,10 +139,11 @@ const toneSymbol: Record<StatusTone, string> = {
 export function Status({
   tone = "neutral",
   size,
+  title,
   children,
-}: PropsWithChildren<{ tone?: StatusTone; size?: "lg" }>) {
+}: PropsWithChildren<{ tone?: StatusTone; size?: "lg"; title?: string | undefined }>) {
   return (
-    <span className="tui-status" data-tone={tone} data-size={size}>
+    <span className="tui-status" data-tone={tone} data-size={size} title={title}>
       <span aria-hidden="true">{toneSymbol[tone]}</span>
       {children}
     </span>
@@ -407,12 +406,12 @@ export function ErrorState({ message, retry }: { message: string; retry?: () => 
   );
 }
 
-/** `████████░░ 3.6 / 3` in block characters, with a screen-reader sentence. */
+/** A rounded progress bar with an optional target tick, plus a screen-reader sentence. */
 export function Bar({
   value,
   max = 5,
   target,
-  cells = 10,
+  cells: _cells = 10,
   tone,
   label,
   showValue = true,
@@ -425,7 +424,9 @@ export function Bar({
   label?: string;
   showValue?: boolean;
 }) {
-  const filled = Math.max(0, Math.min(cells, Math.round((value / max) * cells)));
+  const percent = Math.max(0, Math.min(100, (value / max) * 100));
+  const targetPercent =
+    target === undefined ? undefined : Math.max(0, Math.min(100, (target / max) * 100));
   return (
     <span className="bar" data-tone={tone}>
       <span className="sr-only">
@@ -433,9 +434,11 @@ export function Bar({
         {value.toFixed(1)}
         {target === undefined ? ` of ${max}` : `, target ${target.toFixed(1)}`}
       </span>
-      <span className="bar-cells" aria-hidden="true">
-        {"█".repeat(filled)}
-        <i>{"░".repeat(cells - filled)}</i>
+      <span className="bar-track" aria-hidden="true">
+        <span className="bar-fill" style={{ width: `${percent}%` }} />
+        {targetPercent === undefined ? null : (
+          <span className="bar-target" style={{ left: `calc(${targetPercent}% - 1px)` }} />
+        )}
       </span>
       {showValue ? (
         <span aria-hidden="true">
@@ -500,12 +503,10 @@ export function countdown(iso: string, now: number): string | null {
   return `T-minus ${pad(Math.floor(minutes / 1440))}d ${pad(Math.floor((minutes % 1440) / 60))}h ${pad(minutes % 60)}m`;
 }
 
-/** `deep@talentradar:~/events$ talentradar ls --live`, typed once when `typed`. */
+/** A small labelled line of settings, e.g. the exact configuration behind a run. */
 export function Prompt({
   command,
-  user = "guest",
-  path = "~",
-  typed,
+  user,
 }: {
   command: string;
   user?: string;
@@ -514,34 +515,26 @@ export function Prompt({
 }) {
   return (
     <p className="prompt">
-      <span className="prompt-user">{user}@talentradar</span>:
-      <span className="prompt-path">{path}</span>${" "}
-      <span
-        className={typed ? "prompt-cmd typed align-bottom" : "prompt-cmd"}
-        style={typed ? ({ "--chars": command.length } as CSSProperties) : undefined}
-        key={command}
-      >
-        {command}
-      </span>
+      <span className="prompt-user">{user ? `Settings · @${user}` : "Settings"}</span>
+      <code className="prompt-cmd">{command}</code>
     </p>
   );
 }
 
-/** A terminal window with session tabs; each tab shows the command that produced it. */
+/** A card with pill tabs, e.g. live / upcoming / completed. */
 export function TermTabs<Id extends string>({
   label,
   tabs,
   active,
   onChange,
-  command,
-  user,
   children,
 }: PropsWithChildren<{
   label: string;
   tabs: Array<{ id: Id; label: string; count?: number }>;
   active: Id;
   onChange: (id: Id) => void;
-  command: string;
+  /** Kept for callers; the card no longer prints a command line. */
+  command?: string;
   user?: string;
 }>) {
   const id = useId();
@@ -574,7 +567,7 @@ export function TermTabs<Id extends string>({
             onClick={() => onChange(tab.id)}
           >
             {tab.label}
-            {tab.count === undefined ? null : <kbd>({tab.count})</kbd>}
+            {tab.count === undefined ? null : <kbd>{tab.count}</kbd>}
           </button>
         ))}
       </div>
@@ -584,14 +577,13 @@ export function TermTabs<Id extends string>({
         id={`${id}-panel`}
         aria-labelledby={`${id}-${active}`}
       >
-        <Prompt command={command} typed {...(user ? { user } : {})} />
         {children}
       </div>
     </section>
   );
 }
 
-/** Horizontal wizard stepper: `✓ details ── 2 cv ── 3 repos ── 4 review`. */
+/** Horizontal wizard stepper: numbered circles joined by a line. */
 export function Steps({
   steps,
   current,
@@ -621,7 +613,7 @@ export function Steps({
   );
 }
 
-/** `▸ build log  13 events` — secondary content, one click away. */
+/** `▸ Build log  13 events`: secondary content, one click away. */
 export function Details({
   summary,
   meta,
@@ -644,7 +636,7 @@ export function Stat({ value, label, tone }: { value: ReactNode; label: string; 
   return (
     <div className="grid">
       <span
-        className={`font-display text-6xl leading-none ${tone === "warn" ? "text-warn" : "text-accent"} glow`}
+        className={`font-display text-4xl leading-none ${tone === "warn" ? "text-warn" : "text-accent"}`}
       >
         {value}
       </span>

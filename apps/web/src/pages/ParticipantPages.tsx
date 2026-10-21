@@ -1418,6 +1418,14 @@ function TeamSection({ eventId }: { eventId: string }) {
           teams of {event.teamSize.min}–{event.teamSize.max}
         </span>
       </h2>
+      {context.data.teamWarning ? (
+        <Notice
+          tone={context.data.teamWarning.level === "ineligible" ? "error" : "warn"}
+          tag={context.data.teamWarning.level === "ineligible" ? "ineligible" : "no team yet"}
+        >
+          {context.data.teamWarning.message}
+        </Notice>
+      ) : null}
       {errorNotice}
       <div className="grid gap-4 sm:grid-cols-3">
         <button
@@ -1632,7 +1640,7 @@ function RsvpBlock({ applicationId }: { applicationId: string }) {
     <Pane title="rsvp" meta={`by ${formatDateTime(deadline)}`} active>
       <div className="grid gap-6">
         <p className="grid">
-          <span className="font-display text-4xl leading-none text-warn glow sm:text-5xl">
+          <span className="font-display text-4xl leading-none text-warn sm:text-5xl">
             {remaining}
           </span>
           <span className="dim">until RSVP closes</span>

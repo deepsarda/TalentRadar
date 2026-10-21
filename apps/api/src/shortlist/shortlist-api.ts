@@ -1,4 +1,8 @@
 import {
+  autoFormTeams,
+  type CandidateWithSkills,
+  findTeamGapFillers,
+  optimizeShortlist,
   type PersonProfile,
   QuotaRuleSchema,
   type RankedTeam,
@@ -8,6 +12,7 @@ import {
   type SelectionMember,
   type SelectionTeam,
   selectShortlist,
+  sensitivity,
   type Team,
   taxonomyVersion,
 } from "@talentradar/shared";
@@ -31,8 +36,10 @@ import type {
 import { collections } from "../database/mongo.js";
 import { recordAudit } from "../events/audit.js";
 import type { ApiModule } from "../events/organizer-events.js";
+import { enqueueJob } from "../jobs/queue.js";
 import { applyPublishedRun } from "../participants/decision-api.js";
 import { normalizeCollege } from "./normalize-college.js";
+import { planSecondOpinions, type SecondOpinionProfile } from "./second-opinion-targets.js";
 
 const SelectionOverrideSchema = z.object({
   teamId: z.string().length(24),
@@ -50,6 +57,17 @@ const SaveRunSchema = z.object({
     overrides: z.array(SelectionOverrideSchema).max(1000).default([]),
   }),
 });
+
+const OutcomeRatingInputSchema = z.object({
+  teamId: z.string().length(24),
+  rating: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5)]),
+  note: z.string().trim().max(500).optional(),
+});
+
+const SecondOpinionRequestSchema = SaveRunSchema.omit({ name: true });
+
+/** A request covers at most this many people, closest calls first, so one click cannot burn the quota. */
+const SECOND_OPINION_CAP = 60;
 
 /** Why a team is ineligible beyond what rank() can see; the client prepends the same notes. */
 export const UNTEAMED_NOTE = "No team: registered without a team name";
@@ -124,6 +142,12 @@ function serializeRun(run: ShortlistRunDocument) {
           })),
         }
       : null,
+    sensitivity: run.sensitivity ?? null,
+    outcomeRatings: (run.outcomeRatings ?? []).map(({ by, at, ...rating }) => ({
+      ...rating,
+      by: by.toHexString(),
+      at: at.toISOString(),
+    })),
     published: run.published,
     publishedAt: run.publishedAt?.toISOString(),
     createdAt: run.createdAt.toISOString(),
@@ -346,6 +370,7 @@ export function createShortlistApi(db: Db, authentication: Authentication): ApiM
             capacity: owned.event.capacity,
             ranking: owned.event.ranking,
             quotas: owned.event.quotas,
+            timeline: owned.event.timeline,
           },
           profiles: input.profiles,
           teams: input.selectionTeams,
@@ -392,12 +417,17 @@ export function createShortlistApi(db: Db, authentication: Authentication): ApiM
           rank(input.profiles, input.rankingTeams, parsed.data.params),
           input.ineligibleNotes,
         );
-        const decision = selectShortlist(ranked, input.selectionTeams, {
+        const decision = optimizeShortlist(ranked, input.selectionTeams, {
           capacity: parsed.data.selection.capacity,
           waitlistSize: parsed.data.selection.waitlistSize,
           quotas: parsed.data.selection.quotas,
           overrides: parsed.data.selection.overrides,
         });
+        const sensitivityResult = sensitivity(
+          input.profiles,
+          input.rankingTeams,
+          parsed.data.params,
+        );
         const now = new Date();
         const document: Omit<ShortlistRunDocument, "_id"> = {
           hackathonId: owned.event._id,
@@ -419,6 +449,7 @@ export function createShortlistApi(db: Db, authentication: Authentication): ApiM
             at: now,
           })),
           snapshot: input.snapshot,
+          sensitivity: sensitivityResult,
           published: false,
           createdBy: owned.organizerId,
           createdAt: now,
@@ -445,6 +476,116 @@ export function createShortlistApi(db: Db, authentication: Authentication): ApiM
         }
         response.status(201).json({ run: serializeRun({ ...document, _id: inserted.insertedId }) });
       });
+
+      // Queues a second AI judgment for everyone on a borderline team under these parameters. Only
+      // the closest calls get one (a second judge cannot change a decision that was not close),
+      // and the organizer re-runs the ranking afterwards to see the merged profiles.
+      app.post(
+        "/api/organizer/events/:eventId/shortlist/second-opinions",
+        async (request, response) => {
+          const owned = await ownedEvent(request, response);
+          if (!owned) return;
+          const parsed = SecondOpinionRequestSchema.safeParse(request.body);
+          if (!parsed.success) {
+            response
+              .status(422)
+              .json({ error: "validation_failed", message: "Parameters are invalid" });
+            return;
+          }
+          if (owned.event.ranking.requirements.length === 0) {
+            response.status(409).json({
+              error: "requirements_missing",
+              message: "Add requirements to this event before requesting second opinions",
+            });
+            return;
+          }
+          const input = await loadShortlistInput(db, owned.event);
+          if (input.rankingTeams.length === 0) {
+            response.status(409).json({
+              error: "no_submitted_teams",
+              message: "No submitted teams with completed rosters are available to rank",
+            });
+            return;
+          }
+          const ranked = withIneligibleNotes(
+            rank(input.profiles, input.rankingTeams, parsed.data.params),
+            input.ineligibleNotes,
+          );
+          const decision = selectShortlist(ranked, input.selectionTeams, {
+            capacity: parsed.data.selection.capacity,
+            waitlistSize: parsed.data.selection.waitlistSize,
+            quotas: parsed.data.selection.quotas,
+            overrides: parsed.data.selection.overrides,
+          });
+          const cutoff = decision.cutoffScore ?? 0;
+          const borderlineTeamIds = decision.results
+            .filter((result) => result.borderline)
+            .sort((left, right) => Math.abs(left.score - cutoff) - Math.abs(right.score - cutoff))
+            .map((result) => result.teamId);
+
+          const personIds = [...new Set(input.rankingTeams.flatMap((team) => team.memberIds))].map(
+            (id) => ObjectId.createFromHexString(id),
+          );
+          const profileDocuments = personIds.length
+            ? await db
+                .collection<ProfileDocument>(collections.profiles)
+                .find({ personId: { $in: personIds } })
+                .sort({ personId: 1, version: -1 })
+                .toArray()
+            : [];
+          const latest = new Map<string, SecondOpinionProfile>();
+          for (const profile of profileDocuments) {
+            const personId = profile.personId.toHexString();
+            if (latest.has(personId)) continue;
+            latest.set(personId, {
+              personId,
+              profileId: profile._id.toHexString(),
+              ready: profile.status === "ready",
+              ...(profile.assessmentId ? { assessmentId: profile.assessmentId.toHexString() } : {}),
+              hasSecondOpinion: profile.secondAssessmentId !== undefined,
+            });
+          }
+          const plan = planSecondOpinions({
+            borderlineTeamIds,
+            teams: input.rankingTeams,
+            profiles: latest,
+            cap: SECOND_OPINION_CAP,
+          });
+          for (const target of plan.targets) {
+            await enqueueJob(
+              db,
+              "judge_second_opinion",
+              {
+                profileId: target.profileId,
+                personId: target.personId,
+                assessmentId: target.assessmentId,
+              },
+              {
+                maxAttempts: 3,
+                dedupeKey: `${target.profileId}:second_opinion:${target.assessmentId}`,
+              },
+            );
+          }
+          if (plan.targets.length > 0) {
+            await recordAudit(db, {
+              hackathonId: owned.event._id,
+              actorId: owned.organizerId,
+              action: "second_opinion.requested",
+              changes: [
+                `${plan.targets.length} people on ${plan.borderlineTeams} borderline teams`,
+              ],
+            });
+          }
+          response.status(202).json({
+            borderlineTeams: plan.borderlineTeams,
+            people: plan.people,
+            queued: plan.targets.length,
+            alreadyDone: plan.alreadyDone,
+            notReady: plan.notReady,
+            truncated: plan.truncated,
+          });
+        },
+      );
 
       // Registered before the plain run route, which would otherwise capture `<id>.csv`.
       app.get(
@@ -741,6 +882,254 @@ export function createShortlistApi(db: Db, authentication: Authentication): ApiM
           response.json({ retried });
         },
       );
+
+      // C3: Team Gap-Filler for organizer/shortlist inspector
+      app.get(
+        "/api/organizer/events/:eventId/teams/:teamId/gap-fillers",
+        async (request, response) => {
+          const owned = await ownedEvent(request, response);
+          if (!owned) return;
+          const teamId = routeParam(request, "teamId");
+          if (!teamId || !ObjectId.isValid(String(teamId))) {
+            response.status(404).json({ error: "team_not_found", message: "Team not found" });
+            return;
+          }
+          const teamDoc = await db.collection<TeamDocument>(collections.teams).findOne({
+            _id: ObjectId.createFromHexString(String(teamId)),
+            hackathonId: owned.event._id,
+          });
+          if (!teamDoc) {
+            response.status(404).json({ error: "team_not_found", message: "Team not found" });
+            return;
+          }
+          const input = await loadShortlistInput(db, owned.event);
+          const currentTeam: Team = {
+            teamId: teamDoc._id.toHexString(),
+            name: teamDoc.name,
+            memberIds: teamDoc.memberIds.map((id) => id.toHexString()),
+            submittedAt: teamDoc.submittedAt?.toISOString() ?? new Date().toISOString(),
+          };
+
+          // Find pool of lookingForTeam applicants
+          const poolRegs = await db
+            .collection<RegistrationDocument>(collections.registrations)
+            .find({
+              hackathonId: owned.event._id,
+              lookingForTeam: true,
+              teamId: { $exists: false },
+            })
+            .toArray();
+
+          const poolPersonIds = poolRegs.map((r) => r.personId);
+          const [poolPeople, poolProfiles] = await Promise.all([
+            poolPersonIds.length
+              ? db
+                  .collection<PersonDocument>(collections.people)
+                  .find({ _id: { $in: poolPersonIds } })
+                  .toArray()
+              : Promise.resolve([]),
+            poolPersonIds.length
+              ? db
+                  .collection<ProfileDocument>(collections.profiles)
+                  .find({ personId: { $in: poolPersonIds }, status: "ready" })
+                  .sort({ personId: 1, version: -1 })
+                  .toArray()
+              : Promise.resolve([]),
+          ]);
+
+          const profileMap = new Map<string, ProfileDocument>();
+          for (const p of poolProfiles) {
+            const key = p.personId.toHexString();
+            if (!profileMap.has(key)) profileMap.set(key, p);
+          }
+
+          const candidates: CandidateWithSkills[] = poolPeople.map((person) => {
+            const prof = profileMap.get(person._id.toHexString());
+            return {
+              personId: person._id.toHexString(),
+              name: person.name,
+              github: person.github,
+              ...(person.college ? { college: person.college } : {}),
+              skills: prof?.skills ?? [],
+            };
+          });
+
+          const gapAnalysis = findTeamGapFillers(
+            currentTeam,
+            input.profiles,
+            candidates,
+            owned.event.ranking,
+            5,
+          );
+
+          response.json({ gapAnalysis });
+        },
+      );
+
+      // C4: Auto Team Formation for looking-for-team pool
+      app.get("/api/organizer/events/:eventId/auto-formation", async (request, response) => {
+        const owned = await ownedEvent(request, response);
+        if (!owned) return;
+
+        // Find lookingForTeam applicants
+        const poolRegs = await db
+          .collection<RegistrationDocument>(collections.registrations)
+          .find({
+            hackathonId: owned.event._id,
+            lookingForTeam: true,
+            teamId: { $exists: false },
+          })
+          .toArray();
+
+        const poolPersonIds = poolRegs.map((r) => r.personId);
+        const [poolPeople, poolProfiles] = await Promise.all([
+          poolPersonIds.length
+            ? db
+                .collection<PersonDocument>(collections.people)
+                .find({ _id: { $in: poolPersonIds } })
+                .toArray()
+            : Promise.resolve([]),
+          poolPersonIds.length
+            ? db
+                .collection<ProfileDocument>(collections.profiles)
+                .find({ personId: { $in: poolPersonIds }, status: "ready" })
+                .sort({ personId: 1, version: -1 })
+                .toArray()
+            : Promise.resolve([]),
+        ]);
+
+        const profileMap = new Map<string, ProfileDocument>();
+        for (const p of poolProfiles) {
+          const key = p.personId.toHexString();
+          if (!profileMap.has(key)) profileMap.set(key, p);
+        }
+
+        const candidates: CandidateWithSkills[] = poolPeople.map((person) => {
+          const prof = profileMap.get(person._id.toHexString());
+          return {
+            personId: person._id.toHexString(),
+            name: person.name,
+            github: person.github,
+            ...(person.college ? { college: person.college } : {}),
+            skills: prof?.skills ?? [],
+          };
+        });
+
+        const formation = autoFormTeams(candidates, owned.event.ranking, {
+          targetTeamSize: Math.min(owned.event.teamSize.max, 4),
+          teamNamePrefix: "Auto Squad",
+        });
+
+        response.json({ formation });
+      });
+
+      // Sensitivity analysis for current parameters
+      app.post(
+        "/api/organizer/events/:eventId/shortlist/sensitivity",
+        async (request, response) => {
+          const owned = await ownedEvent(request, response);
+          if (!owned) return;
+          const parsed = RankingParamsSchema.safeParse(request.body.params ?? owned.event.ranking);
+          if (!parsed.success) {
+            response
+              .status(422)
+              .json({ error: "validation_failed", message: "Parameters are invalid" });
+            return;
+          }
+          const input = await loadShortlistInput(db, owned.event);
+          if (input.rankingTeams.length === 0) {
+            response.status(409).json({
+              error: "no_submitted_teams",
+              message: "No submitted teams with completed rosters are available to analyze",
+            });
+            return;
+          }
+          const perturbations =
+            typeof request.body.perturbations === "number" ? request.body.perturbations : 50;
+          const seed = typeof request.body.seed === "number" ? request.body.seed : 42;
+          const result = sensitivity(input.profiles, input.rankingTeams, parsed.data, {
+            perturbations,
+            seed,
+          });
+          response.json({ sensitivity: result });
+        },
+      );
+
+      // Record a post-event outcome rating for one team in a saved run
+      app.post(
+        "/api/organizer/events/:eventId/shortlist/runs/:runId/outcome",
+        async (request, response) => {
+          const owned = await ownedEvent(request, response);
+          if (!owned) return;
+          const runId = parseId(request.params.runId);
+          if (!runId) {
+            response
+              .status(404)
+              .json({ error: "run_not_found", message: "Shortlist run not found" });
+            return;
+          }
+          const parsed = OutcomeRatingInputSchema.safeParse(request.body);
+          if (!parsed.success) {
+            response.status(422).json({ error: "validation_failed", message: "Rating is invalid" });
+            return;
+          }
+          const run = await db
+            .collection<ShortlistRunDocument>(collections.shortlistRuns)
+            .findOne({ _id: runId, hackathonId: owned.event._id });
+          if (!run) {
+            response
+              .status(404)
+              .json({ error: "run_not_found", message: "Shortlist run not found" });
+            return;
+          }
+          const now = new Date();
+          const existing = run.outcomeRatings ?? [];
+          const updated = [
+            ...existing.filter((r) => r.teamId !== parsed.data.teamId),
+            { ...parsed.data, by: owned.organizerId, at: now },
+          ];
+          await db
+            .collection<ShortlistRunDocument>(collections.shortlistRuns)
+            .updateOne({ _id: runId }, { $set: { outcomeRatings: updated } });
+          await recordAudit(db, {
+            hackathonId: owned.event._id,
+            actorId: owned.organizerId,
+            action: "outcome.rated",
+            changes: [`team ${parsed.data.teamId}: rating ${parsed.data.rating}`],
+          });
+          response.json({ ok: true });
+        },
+      );
+
+      // Export all override decisions and outcome ratings for an event (for suggest-weights script)
+      app.get("/api/organizer/events/:eventId/feedback-export", async (request, response) => {
+        const owned = await ownedEvent(request, response);
+        if (!owned) return;
+        const runs = await db
+          .collection<ShortlistRunDocument>(collections.shortlistRuns)
+          .find({ hackathonId: owned.event._id })
+          .sort({ createdAt: 1 })
+          .toArray();
+        response.json({
+          eventId: owned.event._id.toHexString(),
+          eventName: owned.event.name,
+          runs: runs.map((run) => ({
+            runId: run._id.toHexString(),
+            runName: run.name,
+            params: run.params,
+            overrides: run.overrides.map(({ by, at, ...override }) => ({
+              ...override,
+              by: by.toHexString(),
+              at: at.toISOString(),
+            })),
+            outcomeRatings: (run.outcomeRatings ?? []).map(({ by, at, ...r }) => ({
+              ...r,
+              by: by.toHexString(),
+              at: at.toISOString(),
+            })),
+          })),
+        });
+      });
     },
   };
 }

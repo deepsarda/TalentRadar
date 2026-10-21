@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   HackathonTimelineSchema,
   QuotaRuleSchema,
@@ -14,6 +15,7 @@ import type {
   AuditEntryDocument,
   HackathonDocument,
   HackathonTimelineDocument,
+  JobDocument,
   PersonDocument,
   ProfileDocument,
   RegistrationDocument,
@@ -21,6 +23,7 @@ import type {
   UserDocument,
 } from "../database/models.js";
 import { collections } from "../database/mongo.js";
+import { enqueueJob } from "../jobs/queue.js";
 import { diffSummary, listAudit, recordAudit } from "./audit.js";
 
 const LinksSchema = z
@@ -354,6 +357,7 @@ export function createOrganizerEventsApi(db: Db, authentication: Authentication)
           },
           quotas: input.quotas,
           collegeAliases: input.collegeAliases,
+          blindSalt: randomBytes(16).toString("hex"),
           visibility: "draft",
           createdAt: now,
           updatedAt: now,
@@ -780,6 +784,46 @@ export function createOrganizerEventsApi(db: Db, authentication: Authentication)
           });
         }
         response.json({ event: details(event, await metrics(event._id)) });
+      });
+
+      app.post("/api/organizer/events/:eventId/prewarm", async (request, response) => {
+        const owned = await ownedEvent(request, response);
+        if (!owned) return;
+        const dedupeKey = `${owned.event._id.toHexString()}:prewarm`;
+        const jobId = await enqueueJob(
+          db,
+          "prewarm_event_profiles",
+          { hackathonId: owned.event._id.toHexString() },
+          { dedupeKey, maxAttempts: 1 },
+        );
+        response.status(202).json({
+          queued: true,
+          jobId: jobId.toHexString(),
+          status: "queued",
+        });
+      });
+
+      app.get("/api/organizer/events/:eventId/prewarm", async (request, response) => {
+        const owned = await ownedEvent(request, response);
+        if (!owned) return;
+        const job = await db.collection<JobDocument>(collections.jobs).findOne(
+          {
+            type: "prewarm_event_profiles",
+            "payload.hackathonId": owned.event._id.toHexString(),
+          },
+          { sort: { createdAt: -1 } },
+        );
+        if (!job) {
+          response.json({ status: "idle", progress: [] });
+          return;
+        }
+        response.json({
+          jobId: job._id?.toHexString(),
+          status: job.status,
+          progress: job.progress,
+          result: job.result,
+          error: job.error,
+        });
       });
     },
   };

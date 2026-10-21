@@ -326,3 +326,98 @@ describe("failed profile builds", () => {
     await request(app).post(`${base}/failures/${profileId.toHexString()}/retry`).expect(404);
   });
 });
+
+describe("second opinions for borderline teams", () => {
+  const secondBase = `${base}/second-opinions`;
+
+  /** Three one-person teams: two nearly tied for the one seat, and one far behind. */
+  function seedThree(levels: [number, number, number] = [4.5, 4.4, 1.6]) {
+    const data = seed();
+    const people = levels.map(() => new ObjectId());
+    const teamIds = levels.map(() => new ObjectId());
+    const profileIds = levels.map(() => new ObjectId());
+    const template = data.profiles[0] as Doc & { skills: Array<Doc> };
+    data.teams = levels.map((_, index) => ({
+      _id: teamIds[index] as ObjectId,
+      hackathonId: eventId,
+      name: `Team ${index}`,
+      memberIds: [people[index] as ObjectId],
+      status: "submitted",
+      submittedAt: new Date(`2026-10-0${index + 1}T00:00:00Z`),
+    })) as never;
+    data.people = levels.map((_, index) => ({
+      _id: people[index] as ObjectId,
+      name: `Person ${index}`,
+      email: `p${index}@example.com`,
+      github: `p${index}`,
+      verified: false,
+    })) as never;
+    data.profiles = levels.map((level, index) => ({
+      ...template,
+      _id: profileIds[index] as ObjectId,
+      personId: people[index] as ObjectId,
+      displayName: `Person ${index}`,
+      assessmentId: new ObjectId(),
+      skills: [{ ...(template.skills[0] as Doc), level, effective: level }],
+    })) as never;
+    data.registrations = [];
+    return { data, people, profileIds };
+  }
+
+  const body = {
+    params: { requirements: [requirement], minTeamSize: 1, maxTeamSize: 4 },
+    selection: { capacity: 1, waitlistSize: 0 },
+  };
+
+  it("queues a second opinion for members of borderline teams only", async () => {
+    const { data, people, profileIds } = seedThree();
+    const app = appWith(fakeDb(data));
+    const response = await request(app).post(secondBase).send(body).expect(202);
+
+    expect(response.body).toMatchObject({ borderlineTeams: 2, queued: 2, truncated: false });
+    const queued = data.jobs.map((job) => job as Doc & { payload: Doc });
+    expect(queued.map((job) => job["type"])).toEqual([
+      "judge_second_opinion",
+      "judge_second_opinion",
+    ]);
+    expect(queued.map((job) => job.payload["profileId"]).sort()).toEqual(
+      [profileIds[0], profileIds[1]].map((id) => (id as ObjectId).toHexString()).sort(),
+    );
+    expect(queued.map((job) => job.payload["personId"])).not.toContain(
+      (people[2] as ObjectId).toHexString(),
+    );
+    expect(queued[0]?.payload["assessmentId"]).toBe(
+      ((data.profiles[0] as Doc)["assessmentId"] as ObjectId).toHexString(),
+    );
+    expect(data.audit_entries.map(({ action }) => action)).toEqual(["second_opinion.requested"]);
+  });
+
+  it("skips profiles that already have a second opinion or are not ready", async () => {
+    const { data } = seedThree();
+    Object.assign(data.profiles[0] as Doc, { secondAssessmentId: new ObjectId() });
+    Object.assign(data.profiles[1] as Doc, { status: "building" });
+    const app = appWith(fakeDb(data));
+    const response = await request(app).post(secondBase).send(body).expect(202);
+    expect(response.body).toMatchObject({ queued: 0, alreadyDone: 1 });
+    expect(data.jobs).toEqual([]);
+    expect(data.audit_entries).toEqual([]);
+  });
+
+  it("leaves teams far from the cutoff alone, even when the cutoff holder is covered", async () => {
+    const { data, people } = seedThree([5, 1.5, 1.2]);
+    const app = appWith(fakeDb(data));
+    const response = await request(app).post(secondBase).send(body).expect(202);
+    // Only the team holding the last seat sits on the cutoff; the two far behind are untouched.
+    expect(response.body).toMatchObject({ borderlineTeams: 1, queued: 1 });
+    const queued = data.jobs.map((job) => (job as Doc & { payload: Doc }).payload["personId"]);
+    expect(queued).toEqual([(people[0] as ObjectId).toHexString()]);
+  });
+
+  it("asks for requirements first and rejects invalid parameters", async () => {
+    const empty = appWith(fakeDb(seed({ noRequirements: true })));
+    const missing = await request(empty).post(secondBase).send(body).expect(409);
+    expect(missing.body.error).toBe("requirements_missing");
+    const app = appWith(fakeDb(seed()));
+    await request(app).post(secondBase).send({ params: {} }).expect(422);
+  });
+});

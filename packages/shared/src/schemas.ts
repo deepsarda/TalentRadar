@@ -56,6 +56,28 @@ export const RequirementSchema = z.object({
   coverage: CoverageSchema,
 });
 
+export const ProfileFlagSchema = z.enum([
+  "possible_prompt_injection",
+  "readme_overclaims",
+  "mostly_boilerplate",
+]);
+
+/**
+ * Multiplier (0 to 1) applied to every skill level of a member who carries the flag. A person
+ * with several flags gets the product of their multipliers. 1 means "ignore this flag".
+ */
+export const FlagPenaltiesSchema = z.object({
+  possible_prompt_injection: z.number().min(0).max(1).default(0.5),
+  readme_overclaims: z.number().min(0).max(1).default(0.85),
+  mostly_boilerplate: z.number().min(0).max(1).default(0.8),
+});
+
+export const DEFAULT_FLAG_PENALTIES = {
+  possible_prompt_injection: 0.5,
+  readme_overclaims: 0.85,
+  mostly_boilerplate: 0.8,
+} as const;
+
 export const RankingParamsSchema = z
   .object({
     requirements: z.array(RequirementSchema).min(1),
@@ -68,6 +90,18 @@ export const RankingParamsSchema = z
         low: z.number().min(0).max(1).default(0.6),
       })
       .default({ high: 1, medium: 0.85, low: 0.6 }),
+    /** Optional so events saved before this existed stay valid; rank() fills in the defaults. */
+    flagPenalties: FlagPenaltiesSchema.optional(),
+    /**
+     * Points (out of 100) given to team synergy: domain coverage minus a redundancy penalty.
+     * Optional so saved events stay valid; rank() treats a missing value as 0 (no synergy).
+     */
+    synergyWeight: z.number().min(0).max(15).optional(),
+    /**
+     * Share of team novelty taken from the single most novel member; the rest comes from the mean
+     * of the two most novel members. Missing means 0.5. 1 reproduces the old "max member" rule.
+     */
+    noveltyMaxShare: z.number().min(0).max(1).optional(),
     minFit: z.number().min(0).max(1).default(0),
     minTeamSize: z.number().int().min(1).max(6).default(1),
     maxTeamSize: z.number().int().min(1).max(6).default(6),
@@ -138,6 +172,8 @@ export const HackathonSchema = z.object({
   visibility: z.enum(["draft", "published", "closed"]),
 });
 
+export type ProfileFlag = z.infer<typeof ProfileFlagSchema>;
+export type FlagPenalties = z.infer<typeof FlagPenaltiesSchema>;
 export type Evidence = z.infer<typeof EvidenceSchema>;
 export type Confidence = z.infer<typeof ConfidenceSchema>;
 export type ProfileSkill = z.infer<typeof ProfileSkillSchema>;
