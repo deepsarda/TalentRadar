@@ -164,6 +164,42 @@ describe("GitHub client", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("retries a 401 anonymously when the token was revoked", async () => {
+    const authorizations: Array<string | null> = [];
+    const responses = [new Response("", { status: 401 }), new Response("[]", { status: 200 })];
+    const client = createGithubClient({
+      requestsPerHour: 5000,
+      fetchImplementation: (async (_input: string | URL | Request, init?: RequestInit) => {
+        authorizations.push(new Headers(init?.headers).get("authorization"));
+        return responses.shift() ?? new Response("", { status: 500 });
+      }) as typeof fetch,
+    });
+    const response = await client("https://api.github.com/users/wesbos/repos", {
+      headers: { authorization: "Bearer revoked" },
+    });
+    expect(response.status).toBe(200);
+    expect(authorizations).toEqual(["Bearer revoked", null]);
+  });
+
+  it("keeps the 401 when the anonymous retry also fails", async () => {
+    const { client, calls } = github([
+      new Response("", { status: 401 }),
+      new Response("", { status: 404 }),
+    ]);
+    const response = await client("https://api.github.com/user/repos", {
+      headers: { authorization: "Bearer revoked" },
+    });
+    expect(response.status).toBe(401);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("does not retry a 401 that had no token", async () => {
+    const { client, calls } = github([new Response("", { status: 401 })]);
+    const response = await client("https://api.github.com/a");
+    expect(response.status).toBe(401);
+    expect(calls).toHaveLength(1);
+  });
+
   it("counts a long 503 as a failed attempt", async () => {
     const { client } = github([
       new Response("", { status: 503, headers: { "retry-after": "120" } }),
