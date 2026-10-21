@@ -72,8 +72,41 @@
     background: var(--bg);
   }
 
+  /* Transparent so the backdrop below shows; html carries the solid fallback. */
   body {
-    background: var(--bg);
+    background: transparent;
+  }
+
+  /* Fixed backdrop: two soft glows, faint radar rings off the top-right corner, and a
+     dot grid. Panes keep their solid surfaces, so this only shows in the gutters. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(60rem 40rem at 0% 0%, color-mix(in oklab, var(--accent) 10%, transparent), transparent 60%),
+      radial-gradient(50rem 36rem at 100% 10%, color-mix(in oklab, var(--info) 9%, transparent), transparent 60%),
+      radial-gradient(70rem 30rem at 50% 110%, color-mix(in oklab, var(--accent) 6%, transparent), transparent 70%),
+      repeating-radial-gradient(
+        circle at 100% 0%,
+        transparent 0 5.9rem,
+        color-mix(in oklab, var(--accent) 7%, transparent) 5.9rem 6rem
+      ),
+      radial-gradient(color-mix(in oklab, var(--fg) 9%, transparent) 1px, transparent 1.5px) 0 0 / 22px 22px,
+      var(--bg);
+  }
+
+  /* Rings and dots fade out so they never compete with content in the middle. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(ellipse 80% 70% at 50% 45%, var(--bg) 0%, transparent 85%);
+    opacity: 0.8;
   }
 
 
@@ -1239,42 +1272,101 @@
 
   /* ---------------------------------------------------------------- hero */
 
-  .hero-badge {
-    display: inline-block;
-    padding: 0.2rem 0.7rem;
-    border-radius: var(--radius-field);
-    background: var(--accent-soft);
-    color: var(--accent-strong);
-    font-size: 12px;
-    font-weight: 500;
+  .landing-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 3rem;
   }
 
-  .hero-points {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1.25rem;
-    font-size: 13px;
+  .hero-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .hero-title {
+    font-family: var(--font-display);
+    font-size: clamp(2.4rem, 5.5vw, 4.25rem);
+    font-weight: 800;
+    line-height: 1.02;
+    letter-spacing: -0.035em;
+  }
+
+  .hero-title span {
     color: var(--dim);
   }
 
-  .hero-points li {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  .hero-points svg {
-    width: 1rem;
-    height: 1rem;
-    stroke: var(--accent);
-  }
-
-  .hero-visual {
+  .hero-points {
     display: grid;
-    place-items: center;
-    padding: 1.25rem;
-    border-radius: var(--radius);
-    background: var(--soft);
+    margin-top: 0.5rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .hero-points li {
+    display: grid;
+    grid-template-columns: 3ch 1fr;
+    gap: 1rem;
+    padding: 0.8rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .hero-points li > span:last-child {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.75rem;
+  }
+
+  .hero-index {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.9;
+    color: var(--accent);
+  }
+
+  .hero-scope {
+    width: 100%;
+    max-width: 26rem;
+    justify-self: center;
+    overflow: visible;
+  }
+
+  .scope-ring {
+    fill: none;
+    stroke: var(--frame);
+    stroke-width: 1;
+  }
+
+  .scope-sweep {
+    transform-origin: 50% 50%;
+    animation: sweep 6s linear infinite;
+  }
+
+  .scope-sweep path {
+    fill: var(--accent-soft);
+    stroke: var(--accent);
+    stroke-width: 1;
+  }
+
+  .scope-blip circle {
+    fill: var(--accent);
+  }
+
+  .scope-blip text {
+    fill: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+
+  @media (max-width: 860px) {
+    .landing-hero {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .hero-scope {
+      max-width: 18rem;
+    }
   }
 
   /* --------------------------------------------------------------- prose */
