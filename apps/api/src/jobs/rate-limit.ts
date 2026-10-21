@@ -317,6 +317,8 @@ export interface GithubClientOptions {
  * paused until X-RateLimit-Reset whenever GitHub reports none remaining. 429s and rate-limit
  * 403s honour Retry-After (else the reset time); 503s honour Retry-After (else backoff). Short
  * waits are slept through; long ones throw RetryLaterError so the job is rescheduled.
+ * A 401 on a tokened call (the token was revoked or expired) is retried once anonymously, since
+ * most reads are of public data; if that also fails, the original 401 is returned.
  */
 export function createGithubClient(options: GithubClientOptions): typeof fetch {
   const fetchImplementation = options.fetchImplementation ?? fetch;
@@ -346,7 +348,7 @@ export function createGithubClient(options: GithubClientOptions): typeof fetch {
     return limiter;
   };
 
-  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+  const send = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const signal = init?.signal ?? undefined;
     const limiter = limiterFor(new Headers(init?.headers).get("authorization"));
     const pathname = new URL(input instanceof Request ? input.url : input).pathname;
@@ -383,6 +385,15 @@ export function createGithubClient(options: GithubClientOptions): typeof fetch {
         { countsAsAttempt: !rateLimited },
       );
     }
+  };
+
+  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const response = await send(input, init);
+    const headers = new Headers(init?.headers);
+    if (response.status !== 401 || !headers.has("authorization")) return response;
+    headers.delete("authorization");
+    const anonymous = await send(input, { ...init, headers });
+    return anonymous.ok ? anonymous : response;
   };
 }
 
