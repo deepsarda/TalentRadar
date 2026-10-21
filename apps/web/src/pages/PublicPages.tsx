@@ -111,39 +111,56 @@ const infoIcon = (
   </svg>
 );
 
-const arrow = (
-  <svg
-    viewBox="0 0 24 24"
-    width="16"
-    height="16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M5 12h14M13 6l6 6-6 6" />
-  </svg>
-);
-
 const heroPoints = [
-  {
-    label: "No black box",
-    description: "Verified code evidence",
-    path: "M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zM12 12l8-4.5M12 12v9M12 12L4 7.5",
-  },
-  {
-    label: "Fully tunable",
-    description: "Live what-if simulation",
-    path: "M4 7h8M16 7h4M4 17h4M12 17h8M14 5v4M10 15v4",
-  },
-  {
-    label: "Blind review",
-    description: "Bias-free evaluation",
-    path: "M3 3l18 18M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 8.5 4 9.5 6a14 14 0 0 1-2.4 3.2M6.5 7.6A14 14 0 0 0 2.5 12c1 2 4.5 6 9.5 6 1.5 0 2.8-.4 4-.9",
-  },
+  { label: "No black box", description: "Every skill links to the code it came from." },
+  { label: "Fully tunable", description: "Change weights and watch the ranking move." },
+  { label: "Blind review", description: "Hide names and colleges while you judge." },
 ];
+
+/** Blips on the hero scope: angle (deg, clockwise from north), radius 0–1, label. */
+const blips = [
+  { angle: 38, radius: 0.72, label: "backend 3.8" },
+  { angle: 128, radius: 0.48, label: "ai_ml 4.5" },
+  { angle: 222, radius: 0.82, label: "frontend 3.0" },
+  { angle: 300, radius: 0.36, label: "ui_ux 2.5" },
+];
+
+function RadarScope() {
+  const size = 320;
+  const c = size / 2;
+  const r = c - 8;
+  return (
+    <svg
+      viewBox={`0 0 ${size} ${size}`}
+      className="hero-scope"
+      role="img"
+      aria-label="Radar scope showing skill readings"
+    >
+      {[1, 0.75, 0.5, 0.25].map((k) => (
+        <circle key={k} cx={c} cy={c} r={r * k} className="scope-ring" />
+      ))}
+      <path d={`M${c} 8V${size - 8}M8 ${c}H${size - 8}`} className="scope-ring" />
+      <g className="scope-sweep">
+        <path
+          d={`M${c} ${c}L${c} ${c - r}A${r} ${r} 0 0 1 ${c + r * Math.sin(0.9)} ${c - r * Math.cos(0.9)}Z`}
+        />
+      </g>
+      {blips.map((blip) => {
+        const a = (blip.angle * Math.PI) / 180;
+        const x = c + Math.sin(a) * r * blip.radius;
+        const y = c - Math.cos(a) * r * blip.radius;
+        return (
+          <g key={blip.label} className="scope-blip">
+            <circle cx={x} cy={y} r={4} />
+            <text x={x + 9} y={y + 4}>
+              {blip.label}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
 
 export function LandingPage() {
   const events = useQuery({ queryKey: ["public-events"], queryFn: getPublicEvents });
@@ -151,93 +168,47 @@ export function LandingPage() {
   const user = account.data?.login ?? "guest";
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col items-center gap-6 py-4 sm:py-6">
-      {/* Hero Header */}
-      <section className="flex w-full flex-col items-center gap-3 text-center">
-        <span className="hero-badge text-xs px-3.5 py-1 font-semibold">
-          Fair & Explainable Shortlisting
-        </span>
-        <h1 className="font-display tracking-tight text-5xl sm:text-7xl font-black text-white leading-tight">
-          TALENTRADAR
-        </h1>
-        <p className="max-w-2xl text-base sm:text-xl font-medium text-[var(--accent)]">
-          Skill profiles from real code. Rankings you can explain.
-        </p>
-
-        {/* Portal Entry Placements */}
-        <div className="mt-2.5 grid w-full max-w-2xl grid-cols-1 gap-4 sm:grid-cols-2">
-          <Link
-            to="/organizer"
-            className="group flex items-center justify-between rounded-2xl border border-[var(--line)] bg-[var(--raised)] px-6 py-4.5 text-left transition-all hover:border-[var(--accent)] hover:shadow-lg"
-          >
-            <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent)]">
-                Organizers
-              </span>
-              <h3 className="text-lg font-bold text-white">Organizer Console</h3>
-              <p className="text-xs sm:text-sm text-[var(--dim)]">Manage events & shortlists</p>
-            </div>
-            <span className="text-base font-semibold text-[var(--accent)] transition-transform group-hover:translate-x-1.5">
-              {arrow}
-            </span>
-          </Link>
-
-          <Link
-            to="/participant"
-            className="group flex items-center justify-between rounded-2xl border border-[var(--line)] bg-[var(--raised)] px-6 py-4.5 text-left transition-all hover:border-[var(--dim)] hover:shadow-lg"
-          >
-            <div>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--dim)]">
-                Participants
-              </span>
-              <h3 className="text-lg font-bold text-white">Participant Portal</h3>
-              <p className="text-xs sm:text-sm text-[var(--dim)]">View skills & status</p>
-            </div>
-            <span className="text-base font-semibold text-white transition-transform group-hover:translate-x-1.5">
-              {arrow}
-            </span>
-          </Link>
+    <div className="mx-auto grid w-full max-w-6xl gap-12 py-6 sm:py-10">
+      <section className="landing-hero">
+        <div className="grid content-start gap-6">
+          <p className="hero-eyebrow">Fair &amp; explainable shortlisting</p>
+          <h1 className="hero-title">
+            Skill profiles from real code.
+            <span> Rankings you can explain.</span>
+          </h1>
+          <p className="max-w-xl text-lg text-[var(--dim)]">
+            TalentRadar reads each participant&apos;s repositories, scores their skills with linked
+            evidence, and ranks hackathon teams against the requirements you set.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <ActionLink to="/organizer" tone="primary">
+              Organizer console →
+            </ActionLink>
+            <ActionLink to="/participant">Participant portal</ActionLink>
+          </div>
+          <ol className="hero-points">
+            {heroPoints.map((point, index) => (
+              <li key={point.label}>
+                <span className="hero-index">0{index + 1}</span>
+                <span>
+                  <strong>{point.label}</strong>
+                  <span className="dim">{point.description}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
         </div>
-
-        {/* 3 Value Pillars */}
-        <div className="mt-2 grid w-full max-w-3xl grid-cols-1 gap-3 sm:grid-cols-3">
-          {heroPoints.map((point) => (
-            <div
-              key={point.label}
-              className="flex items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--raised)]/60 px-4 py-3 text-left transition-colors"
-            >
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[var(--accent-soft)]">
-                <svg
-                  viewBox="0 0 24 24"
-                  width="18"
-                  height="18"
-                  fill="none"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="stroke-[var(--accent)]"
-                  aria-hidden="true"
-                >
-                  <path d={point.path} />
-                </svg>
-              </span>
-              <div>
-                <h4 className="text-sm font-semibold text-white leading-snug">{point.label}</h4>
-                <p className="text-xs text-[var(--dim)] leading-snug">{point.description}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+        <RadarScope />
       </section>
 
       {/* Hackathons Section */}
       <section
         id="events"
-        className="grid w-full gap-3.5 rounded-2xl border border-[var(--line)] bg-[var(--raised)]/40 p-6 sm:p-7 [&_.term]:border-0 [&_.term]:bg-transparent [&_.term]:overflow-visible [&_.tui-tabs]:px-0 [&_.tui-tabs]:pt-0 [&_.tui-tabs]:pb-3"
+        className="pane grid w-full gap-3.5 p-6 sm:p-7 [&_.term]:border-0 [&_.term]:bg-transparent [&_.term]:overflow-visible [&_.tui-tabs]:px-0 [&_.tui-tabs]:pt-0 [&_.tui-tabs]:pb-3"
       >
         <div className="flex items-center justify-between border-b border-[var(--line)] pb-3">
           <div>
-            <h2 className="font-display text-xl sm:text-2xl font-bold text-white">Hackathons</h2>
+            <h2 className="font-display text-xl sm:text-2xl font-bold">Hackathons</h2>
             <p className="text-sm sm:text-base text-[var(--dim)]">
               Public events accepting registrations
             </p>

@@ -662,7 +662,7 @@ export function ShortlistWorkspacePage() {
   const [runName, setRunName] = useState("Run 1");
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [comparingRuns, setComparingRuns] = useState(false);
-  const [blindEvaluation, setBlindEvaluation] = useState(true);
+  const [blindEvaluation, setBlindEvaluation] = useState(false);
   const [simLabOpen, setSimLabOpen] = useState(false);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
   // The cursor row, and whether its inspector row is open beneath it. The inspector follows the

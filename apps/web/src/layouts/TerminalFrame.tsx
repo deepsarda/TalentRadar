@@ -264,7 +264,7 @@ function Shell() {
   }, [navigate, overlay, tabs]);
 
   return (
-    <div className="app" data-theme="talentradar">
+    <div className="app">
       <a className="sr-only focus:not-sr-only focus:absolute focus:p-2" href="#main-content">
         Skip to content
       </a>

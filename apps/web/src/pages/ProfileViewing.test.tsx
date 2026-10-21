@@ -185,8 +185,6 @@ it("opens the team's profiles from shortlisting, switches members, and restores 
     "organizer/events/:eventId/shortlist",
     <ShortlistWorkspacePage />,
   );
-  // Blind evaluation is on by default and pseudonymizes team names; turn it off to see real names.
-  fireEvent.click(await screen.findByRole("button", { name: /Blind: ON/ }));
   const teamButton = await screen.findByRole("button", { name: "Null Pointers" });
   teamButton.focus();
   fireEvent.click(teamButton);
