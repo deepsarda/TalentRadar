@@ -5,6 +5,8 @@ export {
   type DetectedTool,
   MAX_REPOS_PER_SKILL,
   MAX_UPSTREAM_BONUS,
+  DomainScoresSchema,
+  NO_DOMAIN_EVIDENCE,
   originalityNovelty,
   type ParticipantSignals,
   type ProfileJudgment,

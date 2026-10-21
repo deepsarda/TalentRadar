@@ -1294,9 +1294,6 @@ export function ShortlistWorkspacePage() {
                             >
                               {result.name}
                             </button>
-<<<<<<< HEAD
-                            <TeamTags result={result} flags={teamFlags} />
-=======
                             <TextAction
                               aria-label={`Explain ${result.name}`}
                               aria-expanded={open}
@@ -1308,8 +1305,7 @@ export function ShortlistWorkspacePage() {
                             >
                               explain
                             </TextAction>
-                            <TeamTags result={result} />
->>>>>>> 3d70cf8c20c58d0dbe0498b69827d1d6ec730e62
+                            <TeamTags result={result} flags={teamFlags} />
                           </span>
                         </td>
                         <td data-label="fit" className="num">
@@ -1364,7 +1360,6 @@ export function ShortlistWorkspacePage() {
           </div>
         )}
       </Pane>
-<<<<<<< HEAD
 
       {comparingRuns && eventId && data.runs.length >= 2 ? (
         <CompareRunsModal
@@ -1608,7 +1603,9 @@ export function ShortlistWorkspacePage() {
           error={publishRun.isError ? publishRun.error.message : null}
           onConfirm={() => publishRun.mutate()}
           onClose={() => setPublishConfirmOpen(false)}
-=======
+        />
+      ) : null}
+
       {eventId && profileTeam ? (
         <ProfileModal
           key={profileTeam.teamId}
@@ -1616,7 +1613,6 @@ export function ShortlistWorkspacePage() {
           title={`${profileTeam.name} · profiles`}
           members={profileTeam.members}
           onClose={() => setProfileTeamId(null)}
->>>>>>> 3d70cf8c20c58d0dbe0498b69827d1d6ec730e62
         />
       ) : null}
     </div>

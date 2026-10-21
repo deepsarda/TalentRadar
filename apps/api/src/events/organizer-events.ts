@@ -23,11 +23,8 @@ import type {
   UserDocument,
 } from "../database/models.js";
 import { collections } from "../database/mongo.js";
-<<<<<<< HEAD
 import { enqueueJob } from "../jobs/queue.js";
-=======
 import { serializeProfile } from "../participants/profile-view.js";
->>>>>>> 3d70cf8c20c58d0dbe0498b69827d1d6ec730e62
 import { diffSummary, listAudit, recordAudit } from "./audit.js";
 
 const LinksSchema = z
