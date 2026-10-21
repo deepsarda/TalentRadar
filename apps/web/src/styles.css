@@ -11,22 +11,22 @@
   default: true;
   prefersdark: true;
   color-scheme: "dark";
-  --color-base-100: #171613;
-  --color-base-200: #0f0e0c;
-  --color-base-300: #2b2924;
-  --color-base-content: #efe9dc;
+  --color-base-100: #141416;
+  --color-base-200: #0b0b0c;
+  --color-base-300: #26262a;
+  --color-base-content: #ededef;
   --color-primary: #ff6b2c;
-  --color-primary-content: #1a0a02;
-  --color-secondary: #a19a8b;
-  --color-secondary-content: #1a0a02;
+  --color-primary-content: #140700;
+  --color-secondary: #9a9aa2;
+  --color-secondary-content: #140700;
   --color-accent: #ff6b2c;
-  --color-accent-content: #1a0a02;
-  --color-neutral: #201e1a;
-  --color-neutral-content: #efe9dc;
+  --color-accent-content: #140700;
+  --color-neutral: #1c1c1f;
+  --color-neutral-content: #ededef;
   --color-info: #7db8f0;
   --color-info-content: #06141f;
   --color-success: #8bd17c;
-  --color-success-content: #1a0a02;
+  --color-success-content: #140700;
   --color-warning: #f2c14e;
   --color-warning-content: #1a1000;
   --color-error: #f27a7a;
@@ -45,15 +45,15 @@
   --font-sans: "Instrument Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --font-display: "Bricolage Grotesque", var(--font-sans);
-  --color-bg: #0f0e0c;
-  --color-raised: #171613;
-  --color-fg: #efe9dc;
+  --color-bg: #0b0b0c;
+  --color-raised: #141416;
+  --color-fg: #ededef;
   --color-accent: #ff6b2c;
-  --color-dim: #a19a8b;
+  --color-dim: #9a9aa2;
   --color-warn: #f2c14e;
   --color-error: #f27a7a;
   --color-info: #7db8f0;
-  --color-line: #2b2924;
+  --color-line: #26262a;
 }
 
 /* ---------------------------------------------------------------- base */
@@ -68,15 +68,15 @@
 
 :root {
   color-scheme: dark;
-  --bg: #0f0e0c;
-  --raised: #171613;
-  --soft: #201e1a;
-  --fg: #efe9dc;
+  --bg: #0b0b0c;
+  --raised: #141416;
+  --soft: #1c1c1f;
+  --fg: #ededef;
   --accent: #ff6b2c;
-  --accent-soft: rgb(255 107 44 / 0.14);
+  --accent-soft: rgb(255 255 255 / 0.06);
   --accent-strong: #ff9a66;
-  --on-accent: #1a0a02;
-  --dim: #a19a8b;
+  --on-accent: #140700;
+  --dim: #9a9aa2;
   --warn: #f2c14e;
   --warn-soft: rgb(242 193 78 / 0.14);
   --error: #f27a7a;
@@ -84,9 +84,9 @@
   --info: #7db8f0;
   --info-soft: rgb(55 138 221 / 0.14);
   /* hairlines between rows */
-  --line: #2b2924;
+  --line: #26262a;
   /* card and control borders */
-  --frame: #423e36;
+  --frame: #3a3a40;
   --radius: 3px;
   font-family: var(--font-sans);
   font-size: 15px;
@@ -120,8 +120,8 @@
     pointer-events: none;
     background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
       var(--bg);
-    opacity: 1;
-    background-blend-mode: soft-light;
+    opacity: 0.35;
+    background-blend-mode: overlay;
   }
 
   ::selection {
@@ -183,7 +183,7 @@
   }
 
   .app-header {
-    background: rgb(15 14 12 / 0.88);
+    background: rgb(11 11 12 / 0.88);
     backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--line);
   }
@@ -742,7 +742,7 @@
 
   .input.tui-input::placeholder,
   .textarea.tui-input::placeholder {
-    color: #6f6a5f;
+    color: #6b6b73;
   }
 
   input[type="datetime-local"].tui-input::-webkit-calendar-picker-indicator,
@@ -785,7 +785,7 @@
 
   /* Slider: a real range input, read as `alpha ---o--- 0.70` */
   .range.tui-range {
-    --range-bg: #423e36;
+    --range-bg: #3a3a40;
     --range-thumb: #ffffff;
     --range-thumb-size: 1rem;
     --range-progress: var(--accent);
@@ -839,7 +839,7 @@
     letter-spacing: 0.04em;
     text-transform: uppercase;
     line-height: 1.6;
-    color: #d6cfc0;
+    color: #d4d4d8;
   }
 
   .tui-status[data-size="lg"] {
@@ -1056,7 +1056,7 @@
     width: 7rem;
     height: 6px;
     border-radius: 3px;
-    background: #2b2924;
+    background: #26262a;
   }
 
   .bar-fill {
